@@ -21,8 +21,12 @@ from __future__ import annotations
 
 from typing import Any
 
+# Imported from the submodule, not from ``channels.testing``: that package's
+# __init__ pulls in ChannelsLiveServerTestCase, which imports daphne. A test
+# harness for consumers has no business requiring an ASGI *server*, and the
+# resulting "No module named daphne" reads as "channels is broken".
 try:
-    from channels.testing import WebsocketCommunicator
+    from channels.testing.websocket import WebsocketCommunicator
 except ImportError as exc:  # pragma: no cover - exercised via optional-dep test
     raise ImportError(
         "stapel_realtime.testing requires the optional 'channels' dependency. "

@@ -17,7 +17,7 @@ jobs:
       - name: Install stapel-core (git main)
         run: pip install "stapel-core[channels] @ git+https://github.com/usestapel/stapel-core.git"
       - name: Install
-        run: pip install ".[all]"
+        run: pip install -e ".[all]"
       - name: Lint
         run: |
           pip install ruff --quiet
