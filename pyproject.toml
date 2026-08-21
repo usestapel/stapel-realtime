@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stapel-realtime"
+version = "0.1.0"
+description = "Realtime delivery substrate for the Stapel framework — the Signal primitive on the wire"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["django", "stapel", "realtime", "websocket", "channels", "signal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    # One minor window on the core (library-standard §7.1). 0.32 is the floor
+    # that exists on PyPI today, and everything this package imports from the
+    # core — AppSettings, the G14 Channels middleware, require_capability —
+    # has been there for several minors.
+    #
+    # PIN TODO (release note, not a runtime dependency): the core minor that
+    # ships `stapel_core.comm.signal()` is being cut in parallel. Nothing here
+    # imports it — this package IS the transport that axis names, so the
+    # dependency runs the other way — but once that minor is on PyPI the
+    # floor moves to it, so a host cannot install the transport without the
+    # emitter. Until then `signal_on_commit()` gives the same guarantee.
+    "stapel-core>=0.32,<0.33",
+]
+
+[project.urls]
+Homepage = "https://github.com/usestapel/stapel-realtime"
+Repository = "https://github.com/usestapel/stapel-realtime"
+Documentation = "https://github.com/usestapel/stapel-realtime#readme"
+Changelog = "https://github.com/usestapel/stapel-realtime/blob/main/CHANGELOG.md"
+Issues = "https://github.com/usestapel/stapel-realtime/issues"
+
+[project.optional-dependencies]
+# The envelope, the stream-key canon and the delivery seam work without
+# Channels (they degrade to a silent no-op — that is the contract). Serving a
+# socket does not: consumers, the test harness and the host assembly need it.
+channels = ["stapel-core[channels]>=0.32,<0.33", "channels>=4.0,<5"]
+# The v1 fan-out transport across replicas. Single-worker hosts can run the
+# in-memory layer; anything else is realtime.E001.
+redis = ["channels-redis>=4.2,<5"]
+all = [
+    "stapel-core[channels]>=0.32,<0.33",
+    "channels>=4.0,<5",
+    "channels-redis>=4.2,<5",
+]
+
+[tool.setuptools]
+package-dir = {"stapel_realtime" = "."}
+packages = ["stapel_realtime"]
+
+[tool.setuptools.package-data]
+# The contract documents ship IN THE WHEEL: that is what makes
+# `stapel-catalog --from-installed` possible, i.e. what turns catalog
+# freshness from somebody's discipline into a property of the lockfile.
+# A module that keeps them repo-only publishes code an agent cannot read.
+# `schemas/wire/*.json` is the deliberate L1 exception (spec §4.1): the wire
+# envelope is a versioned contract between a backend consumer and a browser
+# client written by different hands, so it ships as a schema.
+stapel_realtime = [
+    "py.typed",
+    "docs/capabilities.json",
+    "docs/llms.txt",
+    "schemas/**/*.json",
+    "CONFIG.MD",
+]
+
+[tool.stapel.readme]
+# Not on PyPI yet (the trusted publisher for this new repo is a day-one owner
+# action). Until the first release lands, the README carries a status badge and
+# a source install line instead of a pypi badge that would render "not found".
+pypi = false
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Single source for the git hooks and CI (they pass the same flags on the CLI).
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+django_find_project = false
+addopts = "--tb=short -q --import-mode=importlib"
+# Consumers are async by nature; every socket test is a coroutine.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+omit = [
+    "*/tests/*",
+    "*/conftest.py",
+    # The live two-worker harness is exercised by `make e2e` against a real
+    # redis, not by the unit suite; counting it as uncovered library code would
+    # make the ratchet lie in both directions.
+    "*/e2e/*",
+]

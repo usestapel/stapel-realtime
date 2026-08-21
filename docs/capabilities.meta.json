@@ -1,0 +1,97 @@
+{
+  "_comment": "Curated layer for the `surface` section of docs/capabilities.json. The honest boundary, same as stapel-attributes: capabilities.json is otherwise HAND-WRITTEN — this L1 library has no gate registry and no docs/schema.json (no HTTP surface of its own), so provides/axes/extension_points/requires are curated prose, not derived. `make contract` patches in the two derivable things: module/version from pyproject, and the derived `surface`. The classes are the other half of the surface and the selector set does not reach them (it selects module-level functions): EphemeralStreamConsumer, ResumableStreamConsumer and BaseStreamConsumer in consumers.py, WorkspaceCapability in authorize.py, ChannelsSignalTransport in delivery.py, OriginGuard in asgi.py, StreamClient in testing.py. They are documented in `extension_points` and in MODULE.md. checks.py is deliberately not a surface root: system checks are registered, not called.",
+
+  "surface_roots": [
+    {"select": "functions", "path": "delivery.py"},
+    {"select": "functions", "path": "streams.py"},
+    {"select": "functions", "path": "envelope.py"},
+    {"select": "functions", "path": "asgi.py"},
+    {"select": "functions", "path": "authorize.py"},
+    {"select": "functions", "path": "close_codes.py"},
+    {"select": "functions", "path": "testing.py"}
+  ],
+
+  "surface": {
+    "deliver": {
+      "kind": "factory",
+      "intent": "Deliver one ephemeral Signal to everyone watching a stream right now — the seam stapel_core.comm.signal() calls once its SIGNAL_TRANSPORT axis selects Channels. At-most-once and best-effort by contract: no channel layer, no subscriber or a dead redis all mean the frame is dropped and nothing raises. Call comm.signal() from a module; call this directly only from a host wiring its own transport.",
+      "instead_of": ["a hand-rolled async_to_sync(get_channel_layer().group_send) in a module"]
+    },
+    "deliver_frame": {
+      "kind": "factory",
+      "intent": "Fan out one JOURNAL frame (carrying the persisted row's seq) to a resumable stream, after the row is committed. Use this — not deliver() — whenever the frame corresponds to a row a client could replay: the seq is what lets ResumableStreamConsumer deduplicate the replay/live overlap.",
+      "instead_of": ["a module's own broadcast_message() over the channel layer"]
+    },
+    "revoke": {
+      "kind": "gate_function",
+      "intent": "Kick one user (or everyone) off a stream immediately when their access ends — call it from the module's @on_action subscriber on the membership Action. This is the answer to the main leak vector: a socket that keeps streaming after the user was removed. Without it the residual window is the 30-second capability cache.",
+      "instead_of": ["waiting for the client to reconnect before re-checking access"]
+    },
+    "signal_on_commit": {
+      "kind": "factory",
+      "intent": "Schedule deliver() for after the current transaction commits, so a signal can never describe a row that has not landed. Prefer stapel_core.comm.signal() (free of this library); reach for this on a core that does not ship the emitter yet, or in this substrate's own tests.",
+      "instead_of": ["emitting inline inside transaction.atomic() and hoping the commit follows"]
+    },
+    "build_stream_key": {
+      "kind": "factory",
+      "intent": "Assemble a canonical <mod>:<scope_type>:<scope_id>[:<topic>] key with every segment validated. Build keys with this rather than f-strings: the scope being IN the name is what makes a group physically unable to cross a workspace, and a segment with a stray character would otherwise land in a Channels group name.",
+      "instead_of": ["an f-string building a group name in a module"]
+    },
+    "parse_stream_key": {
+      "kind": "factory",
+      "intent": "Parse a canonical key into its module/scope_type/scope_id/topic parts, raising InvalidStreamKey on anything else. This is how an authorizer learns which workspace it is being asked about — a consumer that cannot parse its own stream key must close the socket, not guess a scope."
+    },
+    "workspace_stream": {
+      "kind": "factory",
+      "intent": "Shorthand for the common shape, <module>:ws:<workspace_id>[:<topic>] — the key form the WorkspaceCapability authorizer understands."
+    },
+    "group_name": {
+      "kind": "factory",
+      "intent": "Translate a stream key into its Channels group name (':' is not a legal group character). Long keys fold into a digest rather than being truncated, because truncation would make two streams share one group. Only a host writing its own transport needs this; deliver()/revoke() call it for you."
+    },
+    "frame": {
+      "kind": "factory",
+      "intent": "Build a v1 wire envelope {v, type, payload, seq?, stream?}. Every frame on a Stapel socket goes through this, so the version and the optional-field discipline (no seq on ephemeral frames) hold everywhere.",
+      "instead_of": ["a hand-written dict literal sent with send_json"]
+    },
+    "error_frame": {
+      "kind": "factory",
+      "intent": "Build the `error` envelope — a machine `code` plus a human `message`. Used for refusals that do NOT close the socket, including the `resync` verdict when a resume gap is wider than the replay window."
+    },
+    "parse_frame": {
+      "kind": "factory",
+      "intent": "Validate an inbound envelope into a Frame dataclass, raising InvalidEnvelope rather than returning a half-trusted dict. Note the asymmetry it encodes: an unknown frame TYPE parses (the consumer answers bad_type), an unknown envelope VERSION does not (the shape underneath is unknown)."
+    },
+    "build_websocket_application": {
+      "kind": "factory",
+      "intent": "Assemble the host's whole ProtocolTypeRouter in one call: origin guard (compared WITH the port) over core's G14 JWT stack over a URLRouter of every installed module's routing manifest. This is what a host's asgi.py should contain instead of a hand-written stack — the three existing hand-written ones are why the fleet has three different auth and close-code conventions.",
+      "instead_of": ["a hand-written ProtocolTypeRouter/URLRouter/AuthMiddlewareStack in a host's asgi.py"]
+    },
+    "collect_websocket_urlpatterns": {
+      "kind": "factory",
+      "intent": "Discover every installed app's `<package>.routing.websocket_urlpatterns`. Libraries carry the manifest and the assembly reads it, so a scaffold can emit an ASGI file without knowing any module by name — and a routing module that fails to import raises instead of silently contributing no routes.",
+      "instead_of": ["a hand-kept list of module routing imports in the host"]
+    },
+    "normalize_origin": {
+      "kind": "factory",
+      "intent": "Canonicalize an Origin header or allowlist entry to scheme://host[:port], lower-cased with the scheme's default port elided. The port is identity: an allowlist entry of 'studio.localhost' never matching 'http://studio.localhost:8600' is the incident the origin guard and realtime.E003 exist for."
+    },
+    "deny": {
+      "kind": "gate_function",
+      "intent": "The default authorize hook: refuse, and log which stream a consumer forgot to gate. Fail-closed is the whole design — an open default is a leak that looks like working code in every test a module writes for itself. Do not call it; know that it is what you get by not overriding authorize()."
+    },
+    "user_id_from_scope": {
+      "kind": "predicate",
+      "intent": "The connecting user's pk, or None for an anonymous scope — the one place an authorizer should read identity from, so 'authenticated' means the same thing in every module's hook."
+    },
+    "close_code_name": {
+      "kind": "predicate",
+      "intent": "Machine name for a close code (4403 -> 'forbidden'). Use it in logs and in a client's reconnect switch instead of comparing bare numbers; TERMINAL_CLOSE_CODES next to it names the ones a client must not retry with the same credentials."
+    },
+    "open_stream": {
+      "kind": "factory",
+      "intent": "Connect a test socket to a consumer with an already-authenticated scope, returning a StreamClient that speaks envelopes and swallows heartbeat noise. A module testing its consumer should use this instead of wiring a WebsocketCommunicator by hand — with expect_accept=False it is also how a fail-closed authorize is asserted.",
+      "instead_of": ["a hand-wired channels.testing.WebsocketCommunicator with a hand-built scope"]
+    }
+  }
+}

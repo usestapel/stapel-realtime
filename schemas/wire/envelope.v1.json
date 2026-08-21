@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.usestapel.dev/realtime/wire/envelope.v1.json",
+  "title": "Stapel realtime wire envelope v1",
+  "description": "Every frame on a stapel-realtime socket, in both directions. The envelope is versioned independently of the payload: a module evolves its payload under its own schema, the substrate evolves this wrapper. An L1 library normally publishes no schemas; this one is the deliberate exception (spec 4.1) because the envelope is a contract between a backend consumer and a browser client written by different hands, and it joins the events.json family when that lands.",
+  "type": "object",
+  "required": ["v", "type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Envelope version. A client that does not know this number must fail loudly rather than guess the shape underneath."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "hello",
+        "welcome",
+        "replay",
+        "replay_done",
+        "live",
+        "ephemeral",
+        "ping",
+        "pong",
+        "error",
+        "revoked"
+      ],
+      "description": "hello/ping/pong are client->server; the rest are server->client (ping/pong travel both ways)."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Frame body. Its shape belongs to the module, except for the substrate's own frames described below."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per-stream sequence of a PERSISTED row. Present only on journal frames (replay/live). An ephemeral frame can never carry one: it never touches a persistent model, which is exactly what keeps the two sorts of traffic from mixing."
+    },
+    "stream": {
+      "type": "string",
+      "description": "Canonical stream key <mod>:<scope_type>:<scope_id>[:<topic>]. Optional and redundant under the v1 socket-per-stream topology; stamped anyway so a future multiplexed socket can route on it without a breaking envelope change."
+    }
+  },
+  "$defs": {
+    "hello": {
+      "description": "Client resumes: 'I have everything up to last_seq'. Omitted or 0 means 'I have nothing'.",
+      "type": "object",
+      "properties": {"last_seq": {"type": "integer", "minimum": 0}}
+    },
+    "welcome": {
+      "description": "Subscription accepted. server_seq is the highest sequence the module has persisted for this stream (0 on an ephemeral stream, which has no journal).",
+      "type": "object",
+      "properties": {
+        "server_seq": {"type": "integer", "minimum": 0},
+        "ephemeral": {"type": "boolean"}
+      }
+    },
+    "replay_done": {
+      "description": "Catch-up finished; everything after this frame is live.",
+      "type": "object",
+      "properties": {"up_to_seq": {"type": "integer", "minimum": 0}}
+    },
+    "ephemeral": {
+      "description": "One Signal. `signal` is the emitted signal type (e.g. 'recording.status'); the remaining keys are the module's payload. At-most-once by contract — a client that missed it refetches over REST.",
+      "type": "object",
+      "required": ["signal"],
+      "properties": {"signal": {"type": "string"}}
+    },
+    "error": {
+      "description": "A refusal that does not close the socket. code 'resync' means the resume gap exceeded the replay window and the client must re-hydrate over HTTP pagination.",
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["bad_envelope", "bad_type", "resync", "unauthorized"]
+        },
+        "message": {"type": "string"}
+      }
+    },
+    "revoked": {
+      "description": "Rights were withdrawn while the socket was open. Sent immediately before close 4410; reconnecting will not help until access changes.",
+      "type": "object",
+      "required": ["reason"],
+      "properties": {"reason": {"type": "string"}}
+    }
+  }
+}

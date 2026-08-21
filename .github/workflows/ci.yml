@@ -1,0 +1,110 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # Dev track: the core off git main, for fast feedback while core and
+      # library are co-developed. The release track below installs the pinned
+      # core from PyPI, exactly as a user would.
+      - name: Install stapel-core (git main)
+        run: pip install "git+https://github.com/usestapel/stapel-core.git#egg=stapel-core[channels]"
+
+      - name: Install
+        run: pip install ".[all]"
+
+      - name: Lint
+        run: |
+          pip install ruff --quiet
+          ruff check . --select E,F,W --ignore E501
+
+      - name: Import check
+        run: python -c "import stapel_realtime; print('import OK')"
+
+      - name: Install test dependencies
+        # stapel-tools drives the contract drift gate in tests/test_contract.py.
+        run: pip install pytest pytest-django pytest-cov pytest-asyncio jsonschema "stapel-tools>=0.42.0"
+
+      - name: Tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=stapel_realtime \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --junitxml=junit.xml \
+            -o junit_family=legacy \
+            -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          files: coverage.xml
+          flags: stapel-realtime
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results to Codecov
+        uses: codecov/test-results-action@v1
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Release track (library-standard §7.4): install the wheel the way a user
+  # would, resolving stapel-core from PyPI strictly by the declared pin, with
+  # no git-main core anywhere. This is what catches a "pin into the void" and
+  # drift between the core's branch and its published wheel. Advisory until the
+  # whole dependency graph is on the index.
+  release-track:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build and install the wheel as a user would
+        run: |
+          pip install build --quiet
+          python -m build
+          pip install "$(ls dist/*.whl)[all]"
+      - name: Import smoke (no tests — they are not in the wheel, by design)
+        run: |
+          cd /
+          python -c "
+          import stapel_realtime
+          from stapel_realtime import envelope, streams, delivery, asgi, consumers
+          assert envelope.frame('ping')['v'] == 1
+          assert streams.group_name('recordings:ws:42') == 'recordings.ws.42'
+          print('release-track import OK')
+          "
+      - name: The contract artifacts are IN the wheel
+        run: |
+          python -m zipfile -l dist/*.whl > /tmp/wheel.txt
+          grep -q "docs/capabilities.json" /tmp/wheel.txt
+          grep -q "docs/llms.txt" /tmp/wheel.txt
+          grep -q "schemas/wire/envelope.v1.json" /tmp/wheel.txt
+          grep -q "py.typed" /tmp/wheel.txt
+      - name: Tests, e2e and caches are NOT in the wheel
+        run: |
+          test "$(grep -c 'stapel_realtime/tests/' /tmp/wheel.txt)" -eq 0
+          test "$(grep -c 'stapel_realtime/e2e/' /tmp/wheel.txt)" -eq 0
+          test "$(grep -c '__pycache__' /tmp/wheel.txt)" -eq 0
