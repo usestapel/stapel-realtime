@@ -52,10 +52,17 @@ channels = ["stapel-core[channels]>=0.32,<0.33", "channels>=4.0,<5"]
 # The v1 fan-out transport across replicas. Single-worker hosts can run the
 # in-memory layer; anything else is realtime.E001.
 redis = ["channels-redis>=4.2,<5"]
+# `stapel_realtime.testing` — the harness a module uses to test its own
+# consumer. daphne is here and not in `channels` because importing anything
+# from `channels.testing` executes that package's __init__, which pulls in
+# ChannelsLiveServerTestCase and therefore an ASGI server. A production host
+# serving sockets should not be made to install one; a test run may.
+testing = ["channels>=4.0,<5", "daphne>=4,<5"]
 all = [
     "stapel-core[channels]>=0.32,<0.33",
     "channels>=4.0,<5",
     "channels-redis>=4.2,<5",
+    "daphne>=4,<5",
 ]
 
 [tool.setuptools]

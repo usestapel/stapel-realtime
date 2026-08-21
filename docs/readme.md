@@ -95,8 +95,10 @@ CHANNEL_LAYERS = {
 ```
 
 Install: `pip install 'stapel-realtime[channels,redis]'` on a host that serves
-sockets. A module that only *emits* needs nothing from here — `comm.signal()`
-lives in the core, and that is the point.
+sockets, and `[testing]` on top wherever a module tests its own consumer (that
+extra adds daphne, which `channels.testing` drags in — no reason to put an ASGI
+server on a production host). A module that only *emits* needs nothing from
+here at all: `comm.signal()` lives in the core, and that is the point.
 
 ## The rule that keeps a fifth implementation from appearing
 

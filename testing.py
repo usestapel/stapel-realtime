@@ -14,23 +14,24 @@ Import it from a module's tests::
                                    url_kwargs={"workspace_id": "42"})
         assert await socket.hello() == ...
 
-Requires the ``channels`` extra (it is a test dependency of the consumer, and
-the consumer needs Channels anyway).
+Requires the ``testing`` extra: ``pip install 'stapel-realtime[testing]'``.
+It is one package wider than ``channels`` because importing *anything* from
+``channels.testing`` executes that package's ``__init__``, which pulls in
+``ChannelsLiveServerTestCase`` and therefore daphne. A production host serving
+sockets should not be made to install an ASGI server it does not run; a test
+run may.
 """
 from __future__ import annotations
 
 from typing import Any
 
-# Imported from the submodule, not from ``channels.testing``: that package's
-# __init__ pulls in ChannelsLiveServerTestCase, which imports daphne. A test
-# harness for consumers has no business requiring an ASGI *server*, and the
-# resulting "No module named daphne" reads as "channels is broken".
 try:
     from channels.testing.websocket import WebsocketCommunicator
 except ImportError as exc:  # pragma: no cover - exercised via optional-dep test
     raise ImportError(
-        "stapel_realtime.testing requires the optional 'channels' dependency. "
-        "Install it with:\n    pip install 'stapel-realtime[channels]'"
+        "stapel_realtime.testing requires the optional 'testing' dependencies "
+        "(channels + daphne — see this module's docstring for why daphne).\n"
+        "    pip install 'stapel-realtime[testing]'"
     ) from exc
 
 from . import envelope as wire
