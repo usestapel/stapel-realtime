@@ -24,7 +24,7 @@ jobs:
       # library are co-developed. The release track below installs the pinned
       # core from PyPI, exactly as a user would.
       - name: Install stapel-core (git main)
-        run: pip install "git+https://github.com/usestapel/stapel-core.git#egg=stapel-core[channels]"
+        run: pip install "stapel-core[channels] @ git+https://github.com/usestapel/stapel-core.git"
 
       - name: Install
         run: pip install ".[all]"
@@ -89,13 +89,27 @@ jobs:
       - name: Import smoke (no tests — they are not in the wheel, by design)
         run: |
           cd /
-          python -c "
-          import stapel_realtime
-          from stapel_realtime import envelope, streams, delivery, asgi, consumers
-          assert envelope.frame('ping')['v'] == 1
-          assert streams.group_name('recordings:ws:42') == 'recordings.ws.42'
-          print('release-track import OK')
-          "
+          python - <<'PY'
+          # The Django-free half first: a module that only builds stream keys or
+          # parses envelopes must never need a configured host.
+          from stapel_realtime import envelope, streams
+          assert envelope.frame("ping")["v"] == 1
+          assert streams.group_name("recordings:ws:42") == "recordings.ws.42"
+
+          # Then the half that does, with the smallest host that can exist.
+          import django
+          from django.conf import settings
+          settings.configure(
+              INSTALLED_APPS=["stapel_realtime"],
+              DATABASES={},
+              CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
+          )
+          django.setup()
+          from stapel_realtime import asgi, checks, consumers, delivery, testing  # noqa: F401
+          assert consumers.EphemeralStreamConsumer is not None
+          assert asgi.build_websocket_application(patterns=[]) is not None
+          print("release-track import OK")
+          PY
       - name: The contract artifacts are IN the wheel
         run: |
           python -m zipfile -l dist/*.whl > /tmp/wheel.txt
