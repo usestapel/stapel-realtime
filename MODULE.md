@@ -137,7 +137,7 @@ own stack.
 
 ### Frame types
 
-Ten names are reserved fleet-wide by the core (`comm.signals.RESERVED_FRAME_TYPES`)
+Eleven names are reserved fleet-wide by the core (`comm.signals.RESERVED_FRAME_TYPES`)
 and the core refuses to let a signal type claim one: a signal travels under
 **its own** type in the same `type` field, so the reserved list is what keeps a
 courtesy frame from being read as protocol. What this substrate emits:
@@ -148,8 +148,9 @@ unused — a signal wears its own name.
 Frame kind is **structural**: `seq` present ⇒ journal (`replay`/`live`), absent
 ⇒ ephemeral. There is no mode flag to get wrong.
 
-`replay_done` is the one name this substrate emits that the core's reserved set
-does not yet cover — a test pins that gap exactly so it can only shrink.
+The two sets are **equal** as of core 0.33.2, and a test asserts that in both
+directions: either half growing a frame type the other does not know is a wire
+break, and that is where it surfaces.
 
 ### Close codes
 

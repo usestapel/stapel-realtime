@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-realtime"
-version = "0.1.0"
+version = "0.1.1"
 description = "Realtime delivery substrate for the Stapel framework — the Signal primitive on the wire"
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,8 +29,10 @@ dependencies = [
     # (whose validation `streams.py` re-exports rather than duplicating), and
     # the reserved wire frame types the envelope here is checked against.
     # Anything older has no seam to plug into, so the floor is not a
-    # preference. Published on PyPI as 0.33.0/0.33.1 — no pin into the void.
-    "stapel-core>=0.33,<0.34",
+    # preference. 0.33.2 specifically: it is where the reserved frame-type
+    # set became equal to this package's, so the two halves of the wire
+    # contract agree by construction rather than by a pinned difference.
+    "stapel-core>=0.33.2,<0.34",
 ]
 
 [project.urls]
@@ -44,7 +46,7 @@ Issues = "https://github.com/usestapel/stapel-realtime/issues"
 # The envelope, the stream-key canon and the delivery seam work without
 # Channels (they degrade to a silent no-op — that is the contract). Serving a
 # socket does not: consumers, the test harness and the host assembly need it.
-channels = ["stapel-core[channels]>=0.33,<0.34", "channels>=4.0,<5"]
+channels = ["stapel-core[channels]>=0.33.2,<0.34", "channels>=4.0,<5"]
 # The v1 fan-out transport across replicas. Single-worker hosts can run the
 # in-memory layer; anything else is realtime.E001.
 redis = ["channels-redis>=4.2,<5"]
@@ -55,7 +57,7 @@ redis = ["channels-redis>=4.2,<5"]
 # serving sockets should not be made to install one; a test run may.
 testing = ["channels>=4.0,<5", "daphne>=4,<5"]
 all = [
-    "stapel-core[channels]>=0.33,<0.34",
+    "stapel-core[channels]>=0.33.2,<0.34",
     "channels>=4.0,<5",
     "channels-redis>=4.2,<5",
     "daphne>=4,<5",

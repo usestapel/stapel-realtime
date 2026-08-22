@@ -4,6 +4,23 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.1.1] — 2026-08-22
+
+The wire contract's two halves are now equal sets, not a pinned difference.
+
+### Changed
+
+- Floor raised to `stapel-core>=0.33.2,<0.34`. Core 0.33.2 added `replay_done`
+  — and only it — to `RESERVED_FRAME_TYPES`, so the names this substrate emits
+  and the names the core refuses to let a signal claim are the same eleven.
+  This is a floor rather than a preference: on an older core a module can
+  still name a signal `replay_done`, and a resuming client would read that
+  courtesy frame as the end of its catch-up.
+- `tests/test_envelope.py` asserts the difference is empty in **both**
+  directions instead of pinning one known name. Either half growing a frame
+  type the other does not know is a wire break, and that test is where it
+  surfaces.
+
 ## [0.1.0] — 2026-08-22
 
 First release: the delivery substrate for the **Signal** primitive
@@ -95,10 +112,8 @@ chat's protocol generalized, with the gates the other two were missing.
 - Pinned to `stapel-core>=0.33,<0.34` — the minor that shipped the Signal
   primitive, published as 0.33.0/0.33.1. Older cores have no seam to register
   into, so the floor is not a preference.
-- Known gap, reported upstream: `replay_done` is emitted here and is absent
-  from the core's `RESERVED_FRAME_TYPES`, so a module could legally name a
-  signal `replay_done` and a resuming client would read it as the end of its
-  catch-up. `tests/test_envelope.py` pins the difference exactly, so it can
-  shrink but not widen unnoticed.
+- Known gap at the time of this release, reported upstream and closed in
+  0.1.1: `replay_done` was emitted here and absent from the core's
+  `RESERVED_FRAME_TYPES`.
 - Migrating chat, video-lobby and studio-dialog onto these classes is Ф2/Ф3,
   deliberately not part of this release.

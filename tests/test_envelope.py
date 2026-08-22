@@ -80,12 +80,13 @@ class TestCoreAgreement:
             "the core reserves a frame type this substrate does not know: "
             f"{missing}"
         )
-        # KNOWN GAP, reported upstream: `replay_done` is emitted here and is
-        # not in the core's reserved set, so a module could legally name a
-        # signal `replay_done` and a resuming client would read it as the end
-        # of its catch-up. The next core patch should add it. This assertion
-        # is exact so the gap can only shrink, never widen unnoticed.
-        assert extra == {"replay_done"}, extra
+        # Equal, both directions, as of core 0.33.2 — which closed the one
+        # gap 0.1.0 shipped with (`replay_done` was emitted here and
+        # unreserved there, so a module could legally name a signal that and
+        # a resuming client would read it as the end of its catch-up). The
+        # assertion is exact on purpose: either half growing a frame type the
+        # other does not know is a wire break, and this is where it surfaces.
+        assert extra == set(), extra
 
     def test_the_envelope_version_matches_the_core(self):
         from stapel_core.comm.signals import SIGNAL_ENVELOPE_VERSION

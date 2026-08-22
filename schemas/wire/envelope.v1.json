@@ -31,7 +31,7 @@
   },
   "$defs": {
     "protocol_frame_types": {
-      "description": "The ten names the protocol owns fleet-wide; stapel_core.comm.signals.RESERVED_FRAME_TYPES is the authority and the substrate's tests check the two against each other. 'replay_done' is the one frame the substrate emits that the core's reserved set does not yet cover (reported upstream).",
+      "description": "The eleven names the protocol owns fleet-wide. stapel_core.comm.signals.RESERVED_FRAME_TYPES is the authority and holds exactly this set (core >= 0.33.2); the substrate's tests check the two against each other in both directions, because either half growing a type the other does not know is a wire break.",
       "enum": [
         "hello",
         "welcome",
