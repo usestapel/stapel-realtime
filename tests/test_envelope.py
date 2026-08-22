@@ -68,6 +68,45 @@ class TestParse:
         assert wire.parse_frame({"v": 1, "type": "ping"}).payload == {}
 
 
+class TestCoreAgreement:
+    """The envelope is half a contract; the core wrote the other half."""
+
+    def test_the_protocol_owns_exactly_the_names_the_core_reserves(self):
+        from stapel_core.comm.signals import RESERVED_FRAME_TYPES
+
+        extra = wire.PROTOCOL_FRAME_TYPES - set(RESERVED_FRAME_TYPES)
+        missing = set(RESERVED_FRAME_TYPES) - wire.PROTOCOL_FRAME_TYPES
+        assert missing == set(), (
+            "the core reserves a frame type this substrate does not know: "
+            f"{missing}"
+        )
+        # KNOWN GAP, reported upstream: `replay_done` is emitted here and is
+        # not in the core's reserved set, so a module could legally name a
+        # signal `replay_done` and a resuming client would read it as the end
+        # of its catch-up. The next core patch should add it. This assertion
+        # is exact so the gap can only shrink, never widen unnoticed.
+        assert extra == {"replay_done"}, extra
+
+    def test_the_envelope_version_matches_the_core(self):
+        from stapel_core.comm.signals import SIGNAL_ENVELOPE_VERSION
+
+        assert wire.WIRE_VERSION == SIGNAL_ENVELOPE_VERSION
+
+    def test_a_signal_frame_the_core_builds_parses_here(self):
+        """The literal handoff: what signal() returns is what a client reads."""
+        from stapel_core.comm import signal
+
+        built = signal("recordings:ws:42", "recording.status", {"status": "ready"})
+        parsed = wire.parse_frame(built)
+        assert parsed.type == "recording.status"
+        assert parsed.stream == "recordings:ws:42"
+        assert parsed.is_signal and not parsed.is_journal
+
+    def test_a_protocol_frame_is_not_mistaken_for_a_signal(self):
+        assert not wire.parse_frame(wire.frame(wire.WELCOME)).is_signal
+        assert wire.parse_frame(wire.frame(wire.LIVE, seq=3)).is_journal
+
+
 class TestPublishedSchema:
     """The envelope ships as a JSON schema — the L1 exception spec 4.1 grants."""
 
@@ -76,16 +115,15 @@ class TestPublishedSchema:
     def schema(cls):
         return json.loads(SCHEMA_PATH.read_text())
 
-    def test_schema_frame_types_match_the_code(self, schema):
-        declared = set(schema["properties"]["type"]["enum"])
-        assert declared == wire.CLIENT_FRAME_TYPES | wire.SERVER_FRAME_TYPES
+    def test_schema_protocol_types_match_the_code(self, schema):
+        declared = set(schema["$defs"]["protocol_frame_types"]["enum"])
+        assert declared == wire.PROTOCOL_FRAME_TYPES
 
     def test_schema_error_codes_match_the_code(self, schema):
         declared = set(schema["$defs"]["error"]["properties"]["code"]["enum"])
         assert declared == {
             wire.ERROR_BAD_ENVELOPE,
             wire.ERROR_BAD_TYPE,
-            wire.ERROR_RESYNC,
             wire.ERROR_UNAUTHORIZED,
         }
 
@@ -95,7 +133,8 @@ class TestPublishedSchema:
             wire.frame("ping"),
             wire.frame("welcome", {"server_seq": 4}),
             wire.frame("live", {"x": 1}, seq=9, stream="chat:conv:1"),
-            wire.error_frame("resync", "too wide"),
+            wire.error_frame("bad_type", "no such frame"),
+            wire.frame("recording.status", {"status": "ready"}, stream="recordings:ws:42"),
         ],
     )
     def test_emitted_frames_validate(self, schema, built):

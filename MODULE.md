@@ -18,13 +18,18 @@ The delivery half of the **Signal** primitive. `stapel_core.comm.signal()` is
 the emitter (free, no-op without a backend, importable by every library);
 everything the frame touches after that call lives here:
 
-- `ChannelsSignalTransport` / `deliver()` — the v1 backend the core's
-  `STAPEL_COMM["SIGNAL_TRANSPORT"]` axis names.
+- `deliver(stream_key, frame)` — the v1 backend, registered into the core's
+  seam as `"channels"` from `AppConfig.ready()` and selected by the host with
+  `STAPEL_COMM["SIGNAL_TRANSPORT"] = "channels"` (the default stays `"none"`,
+  which makes `signal()` a silent no-op). The frame the core built is
+  forwarded **verbatim**.
 - `EphemeralStreamConsumer` — at-most-once fan-out to whoever is watching.
 - `ResumableStreamConsumer` — `hello{last_seq}` → `welcome` → replay → live,
   `seq`-deduplicated, with a bounded window and a `resync` verdict beyond it.
 - Wire envelope v1, published as `schemas/wire/envelope.v1.json`.
-- Canonical stream keys, and the group names they map to.
+- Stream-key parsing and the group names keys map to. The key *canon* is the
+  core's (`comm.stream_key`) and is re-exported, never re-implemented — a
+  module that only emits must be able to build one without this library.
 - A fail-closed `authorize()` seam, and `revoke()` to end a subscription now.
 - `build_websocket_application()` — the host's whole WebSocket stack.
 - Five system checks.
@@ -55,7 +60,7 @@ default. Full table with sources in [CONFIG.MD](CONFIG.MD).
 |---|---|---|
 | `HEARTBEAT_S` | `25` | Seconds between server `ping` frames. **Also** the JWT-`exp` re-check interval — `0` disables both (`realtime.W003`). |
 | `HEARTBEAT_TIMEOUT_S` | `10` | Grace period for the client's `pong` before close 4408. |
-| `MAX_REPLAY` | `500` | Replay window, and the `limit` handed to `get_replay_rows`. A wider gap answers `error{code=resync}`. |
+| `MAX_REPLAY` | `500` | Replay window, and the `limit` handed to `get_replay_rows`. A wider gap answers a `resync` frame. |
 | `SEND_QUEUE_SIZE` | `100` | Per-socket outbound buffer before close 4413. |
 | `AUTHORIZE_CACHE_S` | `30` | How long a subscription verdict is reused within one socket. |
 | `ALLOWED_ORIGINS` | `[]` | Exact origins **with port**. Empty disables the guard (`realtime.W002`). |
@@ -112,12 +117,15 @@ optionally `topic`), or override `async get_stream_key()`.
 write the row, then `deliver_frame(...)` on commit. Then a dropped socket costs
 nothing, because the journal — not the transport — is the durable thing.
 
-### Transport (`ChannelsSignalTransport`)
+### Transport (`deliver`)
 
-Named by `STAPEL_COMM["SIGNAL_TRANSPORT"]`. It is both callable and
-`.send()`-able so either resolution convention in the core works. Replace it
-with a dotted path to move Signal onto another bus (NATS `stapel.ws.*` is the
-anticipated microservice value of that axis — not v1).
+The core's seam is `transport(stream_key, frame)`, called after the emitting
+transaction commits, allowed to fail, and expected to fan out and return
+rather than wait on any client. `deliver` implements exactly that and is
+registered under `"channels"`; `register_transport()` is public for a host
+that builds app config by hand. Replace the axis with a dotted path to move
+Signal onto another bus (NATS `stapel.ws.*` is the anticipated microservice
+value — not v1).
 
 ### Host assembly
 
@@ -126,6 +134,22 @@ builds `OriginGuard(JWTAuthMiddlewareStack(URLRouter(patterns)))`. With no
 patterns it discovers `<app>.routing.websocket_urlpatterns` from
 `INSTALLED_APPS`. `OriginGuard` is usable standalone for a host composing its
 own stack.
+
+### Frame types
+
+Ten names are reserved fleet-wide by the core (`comm.signals.RESERVED_FRAME_TYPES`)
+and the core refuses to let a signal type claim one: a signal travels under
+**its own** type in the same `type` field, so the reserved list is what keeps a
+courtesy frame from being read as protocol. What this substrate emits:
+`welcome`, `replay`, `replay_done`, `live`, `resync`, `kick`, `error`, `ping`,
+`pong`; it accepts `hello`, `ping`, `pong`. `ephemeral` stays reserved and
+unused — a signal wears its own name.
+
+Frame kind is **structural**: `seq` present ⇒ journal (`replay`/`live`), absent
+⇒ ephemeral. There is no mode flag to get wrong.
+
+`replay_done` is the one name this substrate emits that the core's reserved set
+does not yet cover — a test pins that gap exactly so it can only shrink.
 
 ### Close codes
 
@@ -136,7 +160,7 @@ own stack.
 | 4403 | `forbidden` | `authorize()` said no |
 | 4404 | `stream_unknown` | The URL did not resolve to a servable stream |
 | 4408 | `heartbeat_timeout` | No `pong` in the window |
-| 4410 | `revoked` | Rights withdrawn while connected |
+| 4410 | `revoked` | Rights withdrawn while connected (a `kick` frame precedes it) |
 | 4413 | `overflow` | Client too slow; send queue overflowed |
 | 4503 | `data_home_unavailable` | Tenant data home unresolvable (L2+ isolation) |
 

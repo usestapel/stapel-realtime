@@ -15,36 +15,44 @@ chat's protocol generalized, with the gates the other two were missing.
 
 ### Added
 
-- **Delivery seam** (`delivery.py`). `deliver()` — the transport
-  `stapel_core.comm.signal()` reaches when `STAPEL_COMM["SIGNAL_TRANSPORT"]`
-  selects Channels; `deliver_frame()` for journal frames carrying a persisted
-  `seq`; `revoke()` for ending a subscription now; `signal_on_commit()` for the
-  `transaction.on_commit` guarantee. All best-effort and non-raising: no
-  Channels, no layer or a dead redis means the frame is dropped, which is the
-  contract. `ChannelsSignalTransport` is both callable and `.send()`-able so
-  either core resolution convention works.
+- **Delivery seam** (`delivery.py`). `deliver(stream_key, frame)` implements
+  the core 0.33 transport contract verbatim and registers itself as
+  `"channels"` from `AppConfig.ready()`; a host opts in with
+  `STAPEL_COMM["SIGNAL_TRANSPORT"] = "channels"` and the core's default stays
+  `"none"`. Plus `deliver_frame()` for journal frames carrying a persisted
+  `seq` and `revoke()` for ending a subscription now. All best-effort and
+  non-raising: no Channels, no layer or a dead redis means the frame is
+  dropped, which is the contract. The `transaction.on_commit` guarantee is the
+  core's — this side is only asked to fan out and return.
 - **`EphemeralStreamConsumer`** — at-most-once Signal fan-out. No `seq`, no
   history, read-only for the client.
 - **`ResumableStreamConsumer`** — `hello{last_seq}` → `welcome` → replay →
   live, deduplicated by `seq`, bounded by `MAX_REPLAY` with an
   `error{code=resync}` verdict beyond it. Two module hooks
   (`get_server_seq`, `get_replay_rows`); everything else is the base class's.
-- **Wire envelope v1** — `{v, type, payload, seq?, stream?}`, published as
+- **Wire envelope v1** — `{v, type, stream, payload, seq?}`, published as
   `schemas/wire/envelope.v1.json` (the deliberate exception to "an L1 library
-  ships no schemas"). The `stream` field is reserved now, unused now: adding a
-  field to a live envelope later would be breaking, reading one that is already
-  there is not.
-- **Canonical stream keys** — `<mod>:<scope_type>:<scope_id>[:<topic>]` with
-  validation, and the Channels group name they map to. Long keys fold into a
-  digest instead of truncating, because truncation would make two streams share
-  one group.
+  ships no schemas"). It is half a contract whose other half the core wrote:
+  `comm.signal()` builds this shape and the substrate forwards it verbatim, so
+  a signal reaches the client under its own type. Frame kind is structural —
+  `seq` present means journal, absent means ephemeral, with no mode flag to
+  get wrong. The ten protocol type names are checked against the core's
+  `RESERVED_FRAME_TYPES` by a test rather than agreed by comment. The `stream`
+  field is populated but redundant under socket-per-stream: adding a field to
+  a live envelope later would be breaking, reading one already there is not.
+- **Stream keys** — parsing, and the Channels group name a key maps to. The
+  canon itself belongs to the core (`comm.stream_key`) and is re-exported here
+  rather than re-implemented: a second regex would be a second answer to "what
+  is a legal key", and a module that only emits must be able to build one
+  without this library. Long keys fold into a digest instead of truncating,
+  because truncation would make two streams share one group.
 - **Fail-closed `authorize()`** — a consumer that does not implement it
   subscribes nobody. Run on connect *and* on every `hello` (subscription and
   re-subscription), with the verdict cached for `AUTHORIZE_CACHE_S` so a
   reconnect does not pay a capability round-trip. `WorkspaceCapability` is the canonical implementation: one
   `require_capability` call, the same predicate and the same 30s cache HTTP
   uses, refusing on every non-answer including an unreachable peer.
-- **Revoke → kick** — a `revoked` frame and close 4410 the moment membership
+- **Revoke → kick** — a `kick` frame and close 4410 the moment membership
   ends, instead of leaking until the client reconnects.
 - **Heartbeat with token-expiry re-check** — each tick re-reads
   `stapel_claims["exp"]` and closes 4401 if it has passed. A socket that
@@ -71,9 +79,12 @@ chat's protocol generalized, with the gates the other two were missing.
 - **`e2e/`** — a two-worker ASGI host over a real redis, proving what a unit
   test cannot: on_commit delivery (and non-delivery on rollback), cross-worker
   fan-out in both directions, no cross-workspace leakage, and the bulk shape.
-  Measured on 2026-08-22: same-worker 8 ms, B→A 47 ms, one emit reaching both
-  workers' sockets 6 ms, 100 signals in one transaction → 100/100 frames on
-  both sockets, 154 ms emit-to-last-frame, arrivals spread over ~1 ms. The
+  It emits through the real `comm.signal()` seam, and the host imports nothing
+  from this library — the split the design rests on, exercised rather than
+  claimed. Measured on 2026-08-22: same-worker 6 ms, B→A 45 ms, one emit
+  reaching both workers' sockets 5 ms, 100 signals in one transaction →
+  100/100 frames on both sockets, 154 ms emit-to-last-frame, arrivals spread
+  over well under 1 ms. The
   bulk shape is the answer to the refetch-storm risk: the burst arrives
   effectively instantaneously, so a debounce in the client's
   `useSignalInvalidate` is a requirement rather than a nicety — undebounced,
@@ -81,9 +92,13 @@ chat's protocol generalized, with the gates the other two were missing.
 
 ### Notes
 
-- Pinned to `stapel-core>=0.32,<0.33` — the published floor. Nothing here
-  imports `comm.signal`; the dependency runs the other way (this package is the
-  transport that axis names). The floor moves to the core minor shipping the
-  emitter once it is on PyPI.
+- Pinned to `stapel-core>=0.33,<0.34` — the minor that shipped the Signal
+  primitive, published as 0.33.0/0.33.1. Older cores have no seam to register
+  into, so the floor is not a preference.
+- Known gap, reported upstream: `replay_done` is emitted here and is absent
+  from the core's `RESERVED_FRAME_TYPES`, so a module could legally name a
+  signal `replay_done` and a resuming client would read it as the end of its
+  catch-up. `tests/test_envelope.py` pins the difference exactly, so it can
+  shrink but not widen unnoticed.
 - Migrating chat, video-lobby and studio-dialog onto these classes is Ф2/Ф3,
   deliberately not part of this release.

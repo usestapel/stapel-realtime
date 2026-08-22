@@ -26,8 +26,8 @@ Public API (lazily exported, PEP 562 — importing this package never pulls in
 Django or Channels):
 
 - ``realtime_settings`` — resolved app settings.
-- ``deliver`` / ``deliver_frame`` / ``revoke`` / ``signal_on_commit`` /
-  ``ChannelsSignalTransport`` — the delivery seam.
+- ``deliver`` / ``deliver_frame`` / ``revoke`` — the delivery seam registered
+  into ``STAPEL_COMM["SIGNAL_TRANSPORT"]`` as ``"channels"``.
 - ``EphemeralStreamConsumer`` / ``ResumableStreamConsumer`` / ``JournalRow``
   — the consumers (need the ``channels`` extra).
 - ``WorkspaceCapability`` — the canonical authorizer for ``ws``-scoped streams.
@@ -41,11 +41,9 @@ Django or Channels):
 __all__ = [
     "realtime_settings",
     # delivery
-    "ChannelsSignalTransport",
     "deliver",
     "deliver_frame",
     "revoke",
-    "signal_on_commit",
     # consumers
     "BaseStreamConsumer",
     "EphemeralStreamConsumer",
@@ -77,11 +75,9 @@ __all__ = [
 # emits signals must not be forced to install the transport.
 _LAZY_EXPORTS = {
     "realtime_settings": ".conf",
-    "ChannelsSignalTransport": ".delivery",
     "deliver": ".delivery",
     "deliver_frame": ".delivery",
     "revoke": ".delivery",
-    "signal_on_commit": ".delivery",
     "BaseStreamConsumer": ".consumers",
     "EphemeralStreamConsumer": ".consumers",
     "ResumableStreamConsumer": ".consumers",

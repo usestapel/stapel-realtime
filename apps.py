@@ -18,5 +18,9 @@ class RealtimeConfig(AppConfig):
 
     def ready(self):
         from .checks import register_checks
+        from .delivery import register_transport
 
         register_checks()
+        # Register, do not activate: the host still selects the transport with
+        # STAPEL_COMM["SIGNAL_TRANSPORT"], whose default stays "none".
+        register_transport()

@@ -237,11 +237,18 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
     # ── group events (server -> socket) ──────────────────────────────────
 
     async def realtime_signal(self, event):
-        """``realtime.signal`` — an ephemeral Signal frame."""
-        await self.send_frame(
-            wire.EPHEMERAL,
-            {"signal": event.get("signal_type"), **(event.get("payload") or {})},
-        )
+        """``realtime.signal`` — a Signal envelope, forwarded verbatim.
+
+        The core built this frame and the client reads it as the core wrote
+        it: the signal's own type in ``type``, no ``seq``, nothing added on
+        the way. Re-wrapping would put a second envelope shape between two
+        packages that already agreed on one.
+        """
+        frame = dict(event.get("frame") or {})
+        if not frame:
+            return
+        frame.setdefault("stream", self.stream_key)
+        await self._enqueue(frame)
 
     async def realtime_frame(self, event):
         """``realtime.frame`` — a journal frame, deduplicated by ``seq``."""
@@ -255,7 +262,7 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
         if target is not None and str(target) != str(self._user_id()):
             return
         await self.send_frame(
-            wire.REVOKED, {"reason": event.get("reason") or "access_revoked"}
+            wire.KICK, {"reason": event.get("reason") or "access_revoked"}
         )
         await self._drain_then_close(CLOSE_REVOKED)
 
@@ -423,9 +430,15 @@ class ResumableStreamConsumer(BaseStreamConsumer):
         limit = int(realtime_settings.MAX_REPLAY)
         if server_seq - last_seq > limit:
             # No infinite rewind: the client re-hydrates over HTTP pagination.
-            await self._error(
-                wire.ERROR_RESYNC,
-                f"resume gap {server_seq - last_seq} exceeds window {limit}",
+            # A frame of its own rather than an `error`, because this is a
+            # normal instruction, not a refusal — the socket stays open.
+            await self.send_frame(
+                wire.RESYNC,
+                {
+                    "gap": server_seq - last_seq,
+                    "window": limit,
+                    "server_seq": server_seq,
+                },
             )
             return
 

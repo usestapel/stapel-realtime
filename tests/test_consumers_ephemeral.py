@@ -134,36 +134,41 @@ class TestSubscriptionGates:
         await socket.close()
 
 
+def signal_frame(stream=STREAM, signal_type="recording.status", **payload):
+    """What stapel_core.comm.signal() hands the transport."""
+    return {"v": 1, "type": signal_type, "stream": stream, "payload": payload}
+
+
 class TestDelivery:
-    async def test_a_signal_reaches_a_subscriber(self, user):
+    async def test_a_signal_reaches_a_subscriber_verbatim(self, user):
         socket = await open_stream(OpenConsumer, user=user, url_kwargs=WS_KWARGS)
         await socket.hello()
         await sync_to_async(delivery.deliver)(
-            STREAM, "recording.status", {"recording_id": "7", "status": "ready"}
+            STREAM, signal_frame(recording_id="7", status="ready")
         )
-        frame = await socket.expect(wire.EPHEMERAL)
-        assert frame.payload == {
-            "signal": "recording.status",
-            "recording_id": "7",
-            "status": "ready",
-        }
+        frame = await socket.receive()
+        assert frame.type == "recording.status", "the signal carries its own type"
+        assert frame.payload == {"recording_id": "7", "status": "ready"}
         assert frame.seq is None, "an ephemeral frame must never carry a seq"
+        assert frame.is_signal and not frame.is_journal
         assert frame.stream == STREAM
         await socket.close()
 
     async def test_a_signal_on_another_stream_is_not_delivered(self, user):
         socket = await open_stream(OpenConsumer, user=user, url_kwargs=WS_KWARGS)
         await socket.hello()
-        await sync_to_async(delivery.deliver)("recordings:ws:99", "x", {})
+        await sync_to_async(delivery.deliver)(
+            "recordings:ws:99", signal_frame(stream="recordings:ws:99")
+        )
         assert await socket.receive_nothing()
         await socket.close()
 
     async def test_two_subscribers_both_get_it(self, user, other_user):
         a = await open_stream(OpenConsumer, user=user, url_kwargs=WS_KWARGS)
         b = await open_stream(OpenConsumer, user=other_user, url_kwargs=WS_KWARGS)
-        await sync_to_async(delivery.deliver)(STREAM, "recording.status", {"id": "7"})
-        assert (await a.expect(wire.EPHEMERAL)).payload["id"] == "7"
-        assert (await b.expect(wire.EPHEMERAL)).payload["id"] == "7"
+        await sync_to_async(delivery.deliver)(STREAM, signal_frame(id="7"))
+        assert (await a.receive()).payload["id"] == "7"
+        assert (await b.receive()).payload["id"] == "7"
         await a.close()
         await b.close()
 
@@ -207,21 +212,21 @@ class TestRevoke:
         )
         await sync_to_async(delivery.revoke)(STREAM, user.pk, reason="left_workspace")
 
-        frame = await victim.expect(wire.REVOKED)
+        frame = await victim.expect(wire.KICK)
         assert frame.payload["reason"] == "left_workspace"
         assert await victim.wait_closed() == CLOSE_REVOKED
         # The other subscriber is untouched and still receiving.
         assert await bystander.receive_nothing()
-        await sync_to_async(delivery.deliver)(STREAM, "recording.status", {"id": "9"})
-        assert (await bystander.expect(wire.EPHEMERAL)).payload["id"] == "9"
+        await sync_to_async(delivery.deliver)(STREAM, signal_frame(id="9"))
+        assert (await bystander.receive()).payload["id"] == "9"
         await bystander.close()
 
     async def test_a_stream_wide_revoke_kicks_everyone(self, user, other_user):
         a = await open_stream(OpenConsumer, user=user, url_kwargs=WS_KWARGS)
         b = await open_stream(OpenConsumer, user=other_user, url_kwargs=WS_KWARGS)
         await sync_to_async(delivery.revoke)(STREAM, None)
-        assert (await a.expect(wire.REVOKED)).payload["reason"] == "access_revoked"
-        assert (await b.expect(wire.REVOKED)).payload["reason"] == "access_revoked"
+        assert (await a.expect(wire.KICK)).payload["reason"] == "access_revoked"
+        assert (await b.expect(wire.KICK)).payload["reason"] == "access_revoked"
         assert await a.wait_closed() == CLOSE_REVOKED
         assert await b.wait_closed() == CLOSE_REVOKED
 
@@ -245,7 +250,9 @@ class TestBackpressure:
         StalledConsumer.gate = asyncio.Event()
         socket = await open_stream(StalledConsumer, user=user, url_kwargs=WS_KWARGS)
         for i in range(50):
-            await sync_to_async(delivery.deliver)(STREAM, "flood", {"i": i})
+            await sync_to_async(delivery.deliver)(
+                STREAM, signal_frame(signal_type="flood", i=i)
+            )
             await asyncio.sleep(0)
         message = await socket.communicator.receive_output(timeout=2)
         assert message["type"] == "websocket.close"
@@ -256,9 +263,11 @@ class TestBackpressure:
         settings.STAPEL_REALTIME = {"HEARTBEAT_S": 3600, "SEND_QUEUE_SIZE": 4}
         socket = await open_stream(OpenConsumer, user=user, url_kwargs=WS_KWARGS)
         for i in range(20):
-            await sync_to_async(delivery.deliver)(STREAM, "burst", {"i": i})
+            await sync_to_async(delivery.deliver)(
+                STREAM, signal_frame(signal_type="burst", i=i)
+            )
             await asyncio.sleep(0)
-        received = [(await socket.expect(wire.EPHEMERAL)).payload["i"] for _ in range(20)]
+        received = [(await socket.receive()).payload["i"] for _ in range(20)]
         assert received == list(range(20))
         await socket.close()
 
@@ -276,8 +285,10 @@ class TestHeartbeat:
         assert (await socket.receive_raw(timeout=2)).type == wire.PING
         await socket.send(wire.PONG)
         await asyncio.sleep(0.3)
-        await sync_to_async(delivery.deliver)(STREAM, "still.here", {})
-        assert (await socket.expect(wire.EPHEMERAL)).payload["signal"] == "still.here"
+        await sync_to_async(delivery.deliver)(
+            STREAM, signal_frame(signal_type="still.here")
+        )
+        assert (await socket.receive()).type == "still.here"
         await socket.close()
 
     async def test_a_socket_outliving_its_token_is_closed_4401(self, user, settings):

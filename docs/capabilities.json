@@ -195,7 +195,7 @@
       "name": "deliver",
       "kind": "factory",
       "path": "stapel_realtime.delivery.deliver",
-      "intent": "Deliver one ephemeral Signal to everyone watching a stream right now — the seam stapel_core.comm.signal() calls once its SIGNAL_TRANSPORT axis selects Channels. At-most-once and best-effort by contract: no channel layer, no subscriber or a dead redis all mean the frame is dropped and nothing raises. Call comm.signal() from a module; call this directly only from a host wiring its own transport.",
+      "intent": "The transport callable the core's STAPEL_COMM['SIGNAL_TRANSPORT'] = 'channels' resolves to: transport(stream_key, frame), called after commit with the complete envelope stapel_core.comm.signal() built, forwarded to subscribers verbatim. At-most-once and best-effort — no layer, no subscriber or a dead redis all mean the frame is dropped and nothing raises. Emit with comm.signal(); call this directly only when wiring a transport by hand.",
       "instead_of": [
         "a hand-rolled async_to_sync(get_channel_layer().group_send) in a module"
       ]
@@ -210,28 +210,25 @@
       ]
     },
     {
+      "name": "register_transport",
+      "kind": "factory",
+      "path": "stapel_realtime.delivery.register_transport",
+      "intent": "Register deliver() into the core's signal seam under the name 'channels'. Called from this package's AppConfig.ready(); a host that composes app config by hand and wants the axis to resolve calls it itself. Registration is not activation — the host still selects the transport, and the default stays 'none'."
+    },
+    {
       "name": "revoke",
       "kind": "gate_function",
       "path": "stapel_realtime.delivery.revoke",
-      "intent": "Kick one user (or everyone) off a stream immediately when their access ends — call it from the module's @on_action subscriber on the membership Action. This is the answer to the main leak vector: a socket that keeps streaming after the user was removed. Without it the residual window is the 30-second capability cache.",
+      "intent": "Kick one user (or everyone) off a stream immediately when their access ends — call it from the module's @on_action subscriber on the membership Action. The subscriber gets a `kick` frame and close 4410. This is the answer to the main leak vector: a socket that keeps streaming after the user was removed. Without it the residual window is the 30-second capability cache.",
       "instead_of": [
         "waiting for the client to reconnect before re-checking access"
-      ]
-    },
-    {
-      "name": "signal_on_commit",
-      "kind": "factory",
-      "path": "stapel_realtime.delivery.signal_on_commit",
-      "intent": "Schedule deliver() for after the current transaction commits, so a signal can never describe a row that has not landed. Prefer stapel_core.comm.signal() (free of this library); reach for this on a core that does not ship the emitter yet, or in this substrate's own tests.",
-      "instead_of": [
-        "emitting inline inside transaction.atomic() and hoping the commit follows"
       ]
     },
     {
       "name": "error_frame",
       "kind": "factory",
       "path": "stapel_realtime.envelope.error_frame",
-      "intent": "Build the `error` envelope — a machine `code` plus a human `message`. Used for refusals that do NOT close the socket, including the `resync` verdict when a resume gap is wider than the replay window."
+      "intent": "Build the `error` envelope — a machine `code` (bad_envelope / bad_type / unauthorized) plus a human `message`. Refusals only; the resume-gap verdict is a `resync` FRAME, not an error, because re-hydrating is a normal instruction and the socket stays open."
     },
     {
       "name": "frame",
@@ -247,15 +244,6 @@
       "kind": "factory",
       "path": "stapel_realtime.envelope.parse_frame",
       "intent": "Validate an inbound envelope into a Frame dataclass, raising InvalidEnvelope rather than returning a half-trusted dict. Note the asymmetry it encodes: an unknown frame TYPE parses (the consumer answers bad_type), an unknown envelope VERSION does not (the shape underneath is unknown)."
-    },
-    {
-      "name": "build_stream_key",
-      "kind": "factory",
-      "path": "stapel_realtime.streams.build_stream_key",
-      "intent": "Assemble a canonical <mod>:<scope_type>:<scope_id>[:<topic>] key with every segment validated. Build keys with this rather than f-strings: the scope being IN the name is what makes a group physically unable to cross a workspace, and a segment with a stray character would otherwise land in a Channels group name.",
-      "instead_of": [
-        "an f-string building a group name in a module"
-      ]
     },
     {
       "name": "group_name",

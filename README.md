@@ -27,7 +27,7 @@ pip install git+https://github.com/usestapel/stapel-realtime
 | Version | `0.1.0` |
 | Python | `>=3.11` (3.11, 3.12, 3.13) |
 | Config axes | 8 |
-| Usage surface | 18 |
+| Usage surface | 17 |
 | Extension points | 6 |
 | Fleet dependencies | [`stapel-core`](https://github.com/usestapel/stapel-core) |
 
@@ -62,12 +62,12 @@ package is everything on the other side of that call.
 
 | | |
 |---|---|
-| **Transport** | `deliver()` / `deliver_frame()` / `revoke()` over the Channels layer — the v1 backend the core's `SIGNAL_TRANSPORT` axis names. Best-effort by contract: no layer, no subscriber, dead redis → the frame is dropped and nothing raises. |
+| **Transport** | `deliver(stream_key, frame)` — the callable the core's `STAPEL_COMM["SIGNAL_TRANSPORT"] = "channels"` resolves to, registered from this package's `AppConfig.ready()`; plus `deliver_frame()` for journal fan-out and `revoke()` for the kick. Best-effort by contract: no layer, no subscriber, dead redis → the frame is dropped and nothing raises. |
 | **Two consumers** | `EphemeralStreamConsumer` (Signal fan-out, no `seq`, no history) and `ResumableStreamConsumer` (`hello{last_seq}` → `welcome` → replay → live, deduplicated by `seq`, bounded replay window). Both are generalizations of `stapel_chat.ChatConsumer`, the one protocol the fleet had actually proven. |
-| **Wire envelope v1** | `{v, type, payload, seq?, stream?}`, published as a JSON schema — the deliberate exception to "an L1 library ships no schemas", because this contract is shared by a backend consumer and a browser client written by different hands. |
-| **Stream keys** | `<mod>:<scope_type>:<scope_id>[:<topic>]`. The scope is *in the name*, so a group physically cannot cross a workspace. |
+| **Wire envelope v1** | `{v, type, stream, payload, seq?}` — the shape `comm.signal()` builds and this substrate forwards verbatim, published as a JSON schema (the deliberate exception to "an L1 library ships no schemas": the contract is shared by a backend consumer and a browser client written by different hands). Frame kind is structural — `seq` present means journal, absent means ephemeral. |
+| **Stream keys** | `<mod>:<scope_type>:<scope_id>[:<topic>]`, built and validated by the core's `comm.stream_key()` (re-exported here, never re-implemented). The scope is *in the name*, so a group physically cannot cross a workspace. |
 | **Authorization** | A per-stream `authorize()` hook that is **fail-closed**: a consumer that does not implement it subscribes nobody. `WorkspaceCapability` is the canonical implementation — the same `require_capability` predicate HTTP uses. |
-| **Revoke → kick** | `revoke(stream_key, user_id)` sends a `revoked` frame and closes 4410 immediately, rather than leaking until the client happens to reconnect. |
+| **Revoke → kick** | `revoke(stream_key, user_id)` sends a `kick` frame and closes 4410 immediately, rather than leaking until the client happens to reconnect. |
 | **Host assembly** | `build_websocket_application()` — origin guard (compared **with the port**) over core's G14 JWT stack over every installed module's routing manifest, discovered rather than listed. |
 | **System checks** | Five, each one a production bruise turned into a `manage.py check` verdict. |
 | **Test harness** | `stapel_realtime.testing.open_stream()` — an envelope-aware Channels client, so a module testing its consumer does not wire the fourth `WebsocketCommunicator` by hand. |
@@ -96,14 +96,14 @@ websocket_urlpatterns = [
 ```
 
 ```python
-# myapp/services.py — the emit side
-from stapel_core.comm import signal
-from stapel_realtime import workspace_stream
+# myapp/services.py — the emit side. Note what is NOT imported: a module that
+# only signals depends on the core, never on this library.
+from stapel_core.comm import signal, stream_key
 
 with transaction.atomic():
     recording.status = "ready"
     recording.save()
-    signal(workspace_stream("recordings", recording.workspace_id),
+    signal(stream_key("recordings", "ws", recording.workspace_id),
            "recording.status",
            {"recording_id": str(recording.pk), "status": recording.status})
 ```
@@ -119,6 +119,8 @@ application = build_websocket_application(http_application=get_asgi_application(
 ```python
 # settings.py
 INSTALLED_APPS += ["stapel_realtime"]      # so the system checks are registered
+
+STAPEL_COMM = {"SIGNAL_TRANSPORT": "channels"}   # opt in; the default is "none"
 
 STAPEL_REALTIME = {
     "ALLOWED_ORIGINS": ["https://app.example.com"],   # WITH the port if non-default

@@ -23,18 +23,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # One minor window on the core (library-standard §7.1). 0.32 is the floor
-    # that exists on PyPI today, and everything this package imports from the
-    # core — AppSettings, the G14 Channels middleware, require_capability —
-    # has been there for several minors.
-    #
-    # PIN TODO (release note, not a runtime dependency): the core minor that
-    # ships `stapel_core.comm.signal()` is being cut in parallel. Nothing here
-    # imports it — this package IS the transport that axis names, so the
-    # dependency runs the other way — but once that minor is on PyPI the
-    # floor moves to it, so a host cannot install the transport without the
-    # emitter. Until then `signal_on_commit()` gives the same guarantee.
-    "stapel-core>=0.32,<0.33",
+    # One minor window on the core (library-standard §7.1). 0.33 is the minor
+    # that shipped the Signal primitive: `comm.signal()`, the
+    # SIGNAL_TRANSPORT seam this package registers into, `comm.stream_key()`
+    # (whose validation `streams.py` re-exports rather than duplicating), and
+    # the reserved wire frame types the envelope here is checked against.
+    # Anything older has no seam to plug into, so the floor is not a
+    # preference. Published on PyPI as 0.33.0/0.33.1 — no pin into the void.
+    "stapel-core>=0.33,<0.34",
 ]
 
 [project.urls]
@@ -48,7 +44,7 @@ Issues = "https://github.com/usestapel/stapel-realtime/issues"
 # The envelope, the stream-key canon and the delivery seam work without
 # Channels (they degrade to a silent no-op — that is the contract). Serving a
 # socket does not: consumers, the test harness and the host assembly need it.
-channels = ["stapel-core[channels]>=0.32,<0.33", "channels>=4.0,<5"]
+channels = ["stapel-core[channels]>=0.33,<0.34", "channels>=4.0,<5"]
 # The v1 fan-out transport across replicas. Single-worker hosts can run the
 # in-memory layer; anything else is realtime.E001.
 redis = ["channels-redis>=4.2,<5"]
@@ -59,7 +55,7 @@ redis = ["channels-redis>=4.2,<5"]
 # serving sockets should not be made to install one; a test run may.
 testing = ["channels>=4.0,<5", "daphne>=4,<5"]
 all = [
-    "stapel-core[channels]>=0.32,<0.33",
+    "stapel-core[channels]>=0.33,<0.34",
     "channels>=4.0,<5",
     "channels-redis>=4.2,<5",
     "daphne>=4,<5",

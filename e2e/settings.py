@@ -58,6 +58,14 @@ CHANNEL_LAYERS = {
     }
 }
 
+# The seam under test: comm.signal() resolves this name to the transport
+# stapel_realtime registered from its AppConfig.ready().
+STAPEL_COMM = {
+    "SIGNAL_TRANSPORT": "channels",
+    "OUTBOX_ENABLED": False,
+    "ACTION_TRANSPORT": "inprocess",
+}
+
 STAPEL_REALTIME = {
     "HEARTBEAT_S": 30,
     "ALLOWED_ORIGINS": ["http://127.0.0.1:8771", "http://127.0.0.1:8772"],

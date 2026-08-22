@@ -9,11 +9,9 @@ import stapel_realtime
 
 EXPECTED_API = [
     "realtime_settings",
-    "ChannelsSignalTransport",
     "deliver",
     "deliver_frame",
     "revoke",
-    "signal_on_commit",
     "BaseStreamConsumer",
     "EphemeralStreamConsumer",
     "ResumableStreamConsumer",
@@ -74,14 +72,18 @@ class TestImportWithoutDjangoSettings:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_envelope_and_streams_need_neither_django_nor_channels(self):
-        """The two modules a client-side tool or a schema check would import."""
+    def test_the_envelope_needs_neither_django_nor_channels(self):
+        """The module a client-side tool or a schema check would import.
+
+        `streams` is deliberately NOT in this list: it re-exports the core's
+        stream-key builder rather than growing a second regex, and the core's
+        comm package is a Django citizen. One canon beats one fewer import.
+        """
         env = {k: v for k, v in os.environ.items() if k != "DJANGO_SETTINGS_MODULE"}
         code = (
             "import sys\n"
-            "from stapel_realtime import envelope, streams\n"
+            "from stapel_realtime import envelope\n"
             "assert envelope.frame('ping')['v'] == 1\n"
-            "assert streams.group_name('recordings:ws:42') == 'recordings.ws.42'\n"
             'bad = [m for m in sys.modules if m.split(".")[0] in ("django", "channels")]\n'
             'assert not bad, bad\n'
         )

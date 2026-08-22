@@ -1,45 +1,49 @@
 """The delivery half of the Signal primitive — Channels/Redis, v1 transport.
 
-``stapel_core.comm.signal()`` is the emitter: sixty lines of stdlib in the
-core, free for all 26 libraries, a silent no-op with no backend configured.
-This module is the backend — the transport the core's ``SIGNAL_TRANSPORT``
-axis names when it is set to ``"channels"``.
+``stapel_core.comm.signal()`` is the emitter: stdlib, free for all 26
+libraries, a silent no-op with no backend configured. This module is the
+backend — the transport the core's ``STAPEL_COMM["SIGNAL_TRANSPORT"] =
+"channels"`` axis resolves to, registered into the core's seam from
+:class:`~stapel_realtime.apps.RealtimeConfig`.
+
+The seam's contract, which :func:`deliver` implements verbatim:
+
+* called as ``transport(stream_key, frame)`` — the routing key and the
+  complete wire envelope the core already built;
+* called **after** the surrounding transaction commits, in the committing
+  thread, so it must fan out and return rather than wait on any client;
+* allowed to fail — the core logs and drops, which is a legal outcome for a
+  signal. This module never raises anyway.
 
 Three send paths, and they are not interchangeable:
 
 * :func:`deliver` — an **ephemeral** signal. No ``seq``, never persisted,
   at-most-once, and a frame lost because nobody was listening is correct
-  behaviour, not an incident (spec §3.2). This is what ``comm.signal()``
-  reaches.
+  behaviour, not an incident.
 * :func:`deliver_frame` — a **journal** frame for a resumable stream. The
   module has already committed the row that owns the ``seq``; this only
   notifies live subscribers of a fact the database already holds. Durability
   belongs to the module's model, never to this transport.
 * :func:`revoke` — the kick. Rights were withdrawn while a socket was open,
-  so the substrate stops leaking now instead of waiting for a reconnect
-  (spec §6.3).
+  so the substrate stops leaking now instead of waiting for a reconnect.
 
 Every path is **best-effort and never raises**. Channels missing, no channel
 layer configured, redis down — delivery is skipped and the caller's
 transaction is unaffected. The pattern is proven by ``stapel_video.realtime``:
 HTTP-only hosts and the entire test fleet keep working, clients just refetch.
-
-Ordering and commit
--------------------
-:func:`signal_on_commit` schedules delivery through ``transaction.on_commit``
-so a signal can never describe a row that has not landed — the same first
-chance the outbox takes, without an outbox row. Emitting inside
-``mutate_and_emit()`` / ``transaction.atomic()`` is therefore safe and is the
-intended call site.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from . import envelope as wire
 from .streams import group_name
 
 logger = logging.getLogger(__name__)
+
+#: The name this transport registers under for ``SIGNAL_TRANSPORT``.
+TRANSPORT_NAME = "channels"
 
 # Channels group-message types. Channels maps dots to underscores to find the
 # consumer method, so ``realtime.signal`` dispatches to ``realtime_signal``.
@@ -78,22 +82,31 @@ def _group_send(stream_key: str, message: dict[str, Any]) -> bool:
         return False
 
 
-def deliver(stream_key: str, signal_type: str, payload: dict[str, Any] | None = None) -> bool:
-    """Deliver one ephemeral signal to everyone watching ``stream_key`` now.
+def deliver(stream_key: str, frame: dict[str, Any]) -> bool:
+    """Deliver one signal envelope to everyone watching ``stream_key`` now.
 
-    This is the seam ``stapel_core.comm.signal()`` calls once its transport
-    axis selects Channels. Returns ``True`` if the frame reached the channel
-    layer — which is not a delivery receipt, only the absence of a local
-    no-op. At-most-once is the contract.
+    This is the callable the core's transport axis names. ``frame`` is the
+    complete wire envelope the core built and is forwarded **verbatim**: the
+    signal's own type travels in ``type``, which is precisely why the core
+    refuses to let a signal claim a protocol frame name.
+
+    Returns ``True`` if the frame reached the channel layer — which is not a
+    delivery receipt, only the absence of a local no-op. At-most-once is the
+    contract.
     """
+    if not isinstance(frame, dict):
+        logger.warning("realtime: refusing a non-dict signal frame for %s", stream_key)
+        return False
+    if frame.get("type") in wire.PROTOCOL_FRAME_TYPES:
+        # The core rejects this at emit time; a direct caller might not have.
+        # A courtesy frame wearing a protocol name would be read as protocol.
+        logger.warning(
+            "realtime: refusing signal frame with reserved type %r on %s",
+            frame.get("type"), stream_key,
+        )
+        return False
     return _group_send(
-        stream_key,
-        {
-            "type": GROUP_TYPE_SIGNAL,
-            "stream": stream_key,
-            "signal_type": signal_type,
-            "payload": dict(payload or {}),
-        },
+        stream_key, {"type": GROUP_TYPE_SIGNAL, "stream": stream_key, "frame": frame}
     )
 
 
@@ -121,7 +134,7 @@ def revoke(stream_key: str, user_id, *, reason: str = "access_revoked") -> bool:
 
     The module calls this from its own ``@on_action`` subscriber when
     membership ends (workspaces already emits those Actions). Subscribers
-    whose ``scope["user"]`` matches get a ``revoked`` frame and close 4410;
+    whose ``scope["user"]`` matches get a ``kick`` frame and close 4410;
     everyone else on the stream is untouched. ``user_id=None`` revokes the
     whole stream — the conversation/room itself is gone.
     """
@@ -136,54 +149,25 @@ def revoke(stream_key: str, user_id, *, reason: str = "access_revoked") -> bool:
     )
 
 
-def signal_on_commit(
-    stream_key: str, signal_type: str, payload: dict[str, Any] | None = None
-) -> None:
-    """Schedule :func:`deliver` for after the current transaction commits.
+def register_transport() -> None:
+    """Register :func:`deliver` as ``"channels"`` in the core's signal seam.
 
-    A signal must never outrun the commit it describes (spec §3.2). Outside a
-    transaction Django runs the callback immediately, so this is also correct
-    on a read path.
-
-    Modules should prefer ``stapel_core.comm.signal()`` — it is free of this
-    library. This function is the same guarantee for hosts on a core that does
-    not ship the emitter yet, and it is what the substrate's own tests use.
+    Called from ``AppConfig.ready()``. Registration is not activation: a host
+    still chooses the transport with ``STAPEL_COMM["SIGNAL_TRANSPORT"]``, and
+    the default stays ``"none"``.
     """
-    from django.db import transaction
+    from stapel_core.comm.signals import register_signal_transport
 
-    transaction.on_commit(lambda: deliver(stream_key, signal_type, payload))
-
-
-class ChannelsSignalTransport:
-    """The signal-delivery backend, as an object.
-
-    Registered as ``STAPEL_COMM["SIGNAL_TRANSPORT"] = "channels"`` (or by
-    dotted path to this class). It is deliberately callable *and* exposes
-    ``send``: the core resolves a transport either way, and a transport that
-    only fits one calling convention is a version-skew trap between two
-    packages released by different hands.
-    """
-
-    def send(
-        self, stream_key: str, signal_type: str, payload: dict[str, Any] | None = None
-    ) -> bool:
-        return deliver(stream_key, signal_type, payload)
-
-    __call__ = send
-
-
-#: Module-level instance, for a transport axis that wants an object.
-channels_transport = ChannelsSignalTransport()
+    register_signal_transport(TRANSPORT_NAME, deliver)
 
 
 __all__ = [
+    "TRANSPORT_NAME",
     "GROUP_TYPE_SIGNAL",
     "GROUP_TYPE_FRAME",
     "GROUP_TYPE_REVOKE",
-    "ChannelsSignalTransport",
-    "channels_transport",
     "deliver",
     "deliver_frame",
+    "register_transport",
     "revoke",
-    "signal_on_commit",
 ]

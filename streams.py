@@ -1,6 +1,13 @@
-"""Canonical stream keys, and the mapping from a stream key to a group name.
+"""Stream keys, and the mapping from a stream key to a Channels group name.
 
-The key shape is ``<mod>:<scope_type>:<scope_id>[:<topic>]`` (spec §6.1)::
+The key canon — ``<mod>:<scope_type>:<scope_id>[:<topic>]`` — **belongs to the
+core**, next to the emitter that validates it
+(``stapel_core.comm.signals.stream_key``). A module that only emits must be
+able to build one without this library, and a second regex here would be a
+second answer to "what is a legal key". So the builder and the exception are
+re-exported, not reimplemented; what lives here is the part that needs a
+transport: parsing a key back into its scope, and translating it into a group
+name.
 
     recordings:ws:9f1c…            a workspace-wide recordings stream
     chat:conv:3d2b…                one conversation's journal
@@ -11,25 +18,21 @@ The key shape is ``<mod>:<scope_type>:<scope_id>[:<topic>]`` (spec §6.1)::
 formatting preference: a group whose name contains the workspace id physically
 cannot deliver a frame across workspaces, whatever a consumer gets wrong later.
 The name is not a secret — knowing it buys nothing, because ``authorize()``
-still runs (spec §6.2).
+still runs.
 
 Group names are not stream keys. Channels restricts a group name to
 ``[A-Za-z0-9_.-]`` under 100 characters, and ``:`` is not in that set, so
 :func:`group_name` translates. Long keys (a topic carrying a long identifier)
 fold into a digest form rather than being truncated — truncation would make two
 different streams share one group, which is a cross-tenant delivery bug.
-
-Nothing here imports Django or Channels.
 """
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import dataclass
 
-#: Characters a stream-key segment may contain. Deliberately narrow: the
-#: segments end up in a Channels group name and in log lines.
-_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+from stapel_core.comm.exceptions import InvalidStreamKey
+from stapel_core.comm.signals import stream_key as build_stream_key
 
 #: Channels' own ceiling is 100; stay under it with room for a prefix.
 _MAX_GROUP_NAME = 90
@@ -37,10 +40,6 @@ _MAX_GROUP_NAME = 90
 #: Scope type used by workspace-scoped streams — the one the workspace
 #: capability authorizer understands (see :mod:`stapel_realtime.authorize`).
 WORKSPACE_SCOPE = "ws"
-
-
-class InvalidStreamKey(ValueError):
-    """A stream key does not follow the canonical shape."""
 
 
 @dataclass(frozen=True)
@@ -60,41 +59,26 @@ class StreamKey:
         return self.scope_type == WORKSPACE_SCOPE
 
 
-def build_stream_key(
-    module: str, scope_type: str, scope_id: str, topic: str | None = None
-) -> str:
-    """Assemble a canonical stream key, validating every segment."""
-    segments = [str(module), str(scope_type), str(scope_id)]
-    if topic is not None:
-        segments.append(str(topic))
-    for segment in segments:
-        if not _SEGMENT_RE.match(segment):
-            raise InvalidStreamKey(
-                f"stream-key segment {segment!r} must match [A-Za-z0-9_.-]+"
-            )
-    return ":".join(segments)
-
-
 def parse_stream_key(key: str) -> StreamKey:
     """Parse ``<mod>:<scope_type>:<scope_id>[:<topic>]``.
 
-    Raises :class:`InvalidStreamKey` on anything else — a consumer that cannot
-    parse its own stream key must close the socket, not guess a scope.
+    Validation is the core's: the parts are re-assembled through
+    :func:`build_stream_key`, so exactly one regex in the fleet decides what a
+    legal key is. Raises :class:`InvalidStreamKey` on anything else — a
+    consumer that cannot parse its own stream key must close the socket, not
+    guess a scope.
     """
     if not isinstance(key, str) or not key:
         raise InvalidStreamKey("stream key must be a non-empty string")
     parts = key.split(":")
     if len(parts) not in (3, 4):
         raise InvalidStreamKey(
-            f"stream key {key!r} must have 3 or 4 colon-separated segments"
+            f"{key!r} must have 3 or 4 colon-separated segments: "
+            "'<mod>:<scope_type>:<scope_id>[:<topic>]'"
         )
-    for part in parts:
-        if not _SEGMENT_RE.match(part):
-            raise InvalidStreamKey(
-                f"stream-key segment {part!r} must match [A-Za-z0-9_.-]+"
-            )
     module, scope_type, scope_id = parts[0], parts[1], parts[2]
     topic = parts[3] if len(parts) == 4 else None
+    build_stream_key(module, scope_type, scope_id, topic)  # raises on a bad segment
     return StreamKey(module=module, scope_type=scope_type, scope_id=scope_id, topic=topic)
 
 

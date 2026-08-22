@@ -41,6 +41,7 @@ canon a package's keys are unprefixed inside its own namespace, so they are
 | `CHANNEL_LAYERS["default"]` | Django Channels | The fan-out backend. Absent → delivery is a silent no-op (realtime.W001). In-memory with more than one worker → realtime.E001. Its `CONFIG.socket_timeout` / `CONFIG.connection_kwargs.socket_timeout` and `CONFIG.expiry` are what realtime.E002 reads. |
 | `WEB_CONCURRENCY` / `UVICORN_WORKERS` / `GUNICORN_WORKERS` | the ASGI server | How realtime.E001 learns the worker count. |
 | the `stapel-core` JWT settings | stapel-core | `build_websocket_application()` installs core's G14 middleware; the socket authenticates with exactly the HTTP token stack. |
+| `STAPEL_COMM["SIGNAL_TRANSPORT"]` | stapel-core | Selects the delivery backend for `comm.signal()`. This library registers itself as `"channels"`; the core's default is `"none"`, which makes every `signal()` a silent no-op. An unresolvable value is reported by `stapel_core.comm.E003`. |
 
 ## e2e host (not shipped in the wheel)
 

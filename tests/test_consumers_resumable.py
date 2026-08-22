@@ -121,11 +121,12 @@ class TestReplayWindow:
         socket = await open_stream(JournalConsumer, user=user, url_kwargs=CONV_KWARGS)
         welcome = await socket.hello(last_seq=0)
         assert welcome.payload["server_seq"] == 50
-        error = await socket.expect(wire.ERROR)
-        assert error.payload["code"] == wire.ERROR_RESYNC
-        assert "50" in error.payload["message"] and "10" in error.payload["message"]
-        # No infinite rewind: nothing is replayed at all.
+        resync = await socket.expect(wire.RESYNC)
+        assert resync.payload == {"gap": 50, "window": 10, "server_seq": 50}
+        # No infinite rewind: nothing is replayed at all, and the socket lives.
         assert await socket.receive_nothing()
+        await socket.send(wire.PING)
+        assert (await socket.receive_raw()).type == wire.PONG
         await socket.close()
 
     async def test_a_gap_inside_the_window_replays_normally(self, user, settings):

@@ -199,19 +199,19 @@ async def scenarios(token):
 
     step("a committed transaction delivers, after the commit")
     started = time.monotonic()
-    emit(WORKER_A, {"stream": STREAM, "count": 1, "type": "same-worker"})
+    emit(WORKER_A, {"stream": STREAM, "count": 1, "type": "beat.same_worker"})
     frame = await next_frame(socket_a)
     same_worker_ms = (time.monotonic() - started) * 1000
-    check(frame["payload"]["signal"] == "same-worker",
+    check(frame["type"] == "beat.same_worker",
           f"same-worker delivery in {same_worker_ms:.0f} ms")
 
     # ── 3. cross-worker fan-out ─────────────────────────────────────────
     step("a socket on worker A receives a signal emitted by worker B")
     started = time.monotonic()
-    emit(WORKER_B, {"stream": STREAM, "count": 1, "type": "b-to-a"})
+    emit(WORKER_B, {"stream": STREAM, "count": 1, "type": "beat.b_to_a"})
     frame = await next_frame(socket_a)
     b_to_a_ms = (time.monotonic() - started) * 1000
-    check(frame["payload"]["signal"] == "b-to-a",
+    check(frame["type"] == "beat.b_to_a",
           f"B -> A delivery in {b_to_a_ms:.0f} ms")
 
     step("and the mirror: a socket on worker B receives worker A's signal")
@@ -219,16 +219,15 @@ async def scenarios(token):
     await socket_b.send(json.dumps({"v": 1, "type": "hello", "payload": {}}))
     await next_frame(socket_b)
     started = time.monotonic()
-    emit(WORKER_A, {"stream": STREAM, "count": 1, "type": "a-to-b"})
+    emit(WORKER_A, {"stream": STREAM, "count": 1, "type": "beat.a_to_b"})
     got_a = await next_frame(socket_a)
     got_b = await next_frame(socket_b)
     a_to_b_ms = (time.monotonic() - started) * 1000
-    check(got_a["payload"]["signal"] == "a-to-b" and
-          got_b["payload"]["signal"] == "a-to-b",
+    check(got_a["type"] == "beat.a_to_b" and got_b["type"] == "beat.a_to_b",
           f"one emit reached BOTH workers' sockets in {a_to_b_ms:.0f} ms")
 
     step("a signal on another workspace's stream reaches neither socket")
-    emit(WORKER_A, {"stream": "e2e:ws:99", "count": 1, "type": "elsewhere"})
+    emit(WORKER_A, {"stream": "e2e:ws:99", "count": 1, "type": "beat.elsewhere"})
     try:
         stray = await next_frame(socket_a, timeout=2)
         check(False, f"cross-workspace leak: {stray}")
@@ -246,11 +245,11 @@ async def scenarios(token):
                 frame = await next_frame(socket, timeout=5)
             except asyncio.TimeoutError:
                 break
-            if frame["payload"].get("signal") == "bulk":
+            if frame["type"] == "beat.bulk":
                 sink.append(time.monotonic())
 
     started = time.monotonic()
-    emit_result = emit(WORKER_B, {"stream": STREAM, "count": BULK, "type": "bulk"})
+    emit_result = emit(WORKER_B, {"stream": STREAM, "count": BULK, "type": "beat.bulk"})
     await asyncio.gather(collect(socket_a, arrivals_a), collect(socket_b, arrivals_b))
     elapsed = time.monotonic() - started
 
