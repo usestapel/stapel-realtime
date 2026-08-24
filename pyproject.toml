@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-realtime"
-version = "0.1.1"
+version = "0.1.2"
 description = "Realtime delivery substrate for the Stapel framework — the Signal primitive on the wire"
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,16 +23,29 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # One minor window on the core (library-standard §7.1). 0.33 is the minor
-    # that shipped the Signal primitive: `comm.signal()`, the
+    # 0.33 is the minor that shipped the Signal primitive: `comm.signal()`, the
     # SIGNAL_TRANSPORT seam this package registers into, `comm.stream_key()`
     # (whose validation `streams.py` re-exports rather than duplicating), and
     # the reserved wire frame types the envelope here is checked against.
     # Anything older has no seam to plug into, so the floor is not a
-    # preference. 0.33.2 specifically: it is where the reserved frame-type
-    # set became equal to this package's, so the two halves of the wire
-    # contract agree by construction rather than by a pinned difference.
-    "stapel-core>=0.33.2,<0.34",
+    # preference. 0.33.2 specifically: it is where the reserved frame-type set
+    # became equal to this package's, so the two halves of the wire contract
+    # agree by construction rather than by a pinned difference.
+    #
+    # The ceiling is <1.0, not the one-minor <0.34 that shipped in 0.1.1. A
+    # pre-1.0 substrate that pins one minor of the core freezes every module
+    # built on it at that minor — and this one is meant to be built on by all
+    # of them. It bit immediately: stapel-chat 0.3.0 moved its floor to core
+    # 0.41 and could not resolve at all.
+    #
+    # A one-minor window is the right discipline where the guarantee is a
+    # version number. Here it is not: `tests/test_envelope.py` asserts, in both
+    # directions, that this package's frame-type set and the core's
+    # RESERVED_FRAME_TYPES are equal. That test is the gate — it fails the
+    # moment either half grows a type the other does not know, which is the
+    # exact break the pin was standing in for. The range only has to name the
+    # floor.
+    "stapel-core>=0.33.2,<1.0",
 ]
 
 [project.urls]
@@ -46,7 +59,7 @@ Issues = "https://github.com/usestapel/stapel-realtime/issues"
 # The envelope, the stream-key canon and the delivery seam work without
 # Channels (they degrade to a silent no-op — that is the contract). Serving a
 # socket does not: consumers, the test harness and the host assembly need it.
-channels = ["stapel-core[channels]>=0.33.2,<0.34", "channels>=4.0,<5"]
+channels = ["stapel-core[channels]>=0.33.2,<1.0", "channels>=4.0,<5"]
 # The v1 fan-out transport across replicas. Single-worker hosts can run the
 # in-memory layer; anything else is realtime.E001.
 redis = ["channels-redis>=4.2,<5"]
@@ -57,7 +70,7 @@ redis = ["channels-redis>=4.2,<5"]
 # serving sockets should not be made to install one; a test run may.
 testing = ["channels>=4.0,<5", "daphne>=4,<5"]
 all = [
-    "stapel-core[channels]>=0.33.2,<0.34",
+    "stapel-core[channels]>=0.33.2,<1.0",
     "channels>=4.0,<5",
     "channels-redis>=4.2,<5",
     "daphne>=4,<5",

@@ -4,6 +4,36 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.1.2] — 2026-08-24
+
+### Fixed — the substrate pinned one minor of the core and froze everyone on it
+
+`stapel-core>=0.33.2,<0.34` was a one-minor window, the standard discipline for
+a library that depends on a moving sibling. It is the wrong discipline for a
+**substrate**: this package is meant to be built on by every module that serves
+a socket, so its ceiling becomes theirs. The first module to try hit it head-on
+— stapel-chat 0.3.0 moved its own floor to core 0.41 to pick up the canonical
+serializer seam, and `pip` could not resolve the pair at all:
+
+```
+stapel-chat 0.3.0 depends on stapel-core<1.0 and >=0.41.0
+stapel-realtime 0.1.1 depends on stapel-core<0.34 and >=0.33.2
+ERROR: ResolutionImpossible
+```
+
+The ceiling is now `<1.0`. Nothing else changed, and nothing in the code needed
+to: the 193-test suite passes unmodified against core 0.43.
+
+**Why dropping the cap is not a loosening.** A one-minor window is right where
+the compatibility guarantee *is* the version number. Here it is not.
+`tests/test_envelope.py` asserts, in both directions, that this package's frame
+types and the core's `RESERVED_FRAME_TYPES` are equal sets — the very check
+0.1.1 was released to add. That test fails the moment either half grows a type
+the other does not know, which is precisely the break the pin was standing in
+for, and it fails in CI against whatever core is actually installed rather than
+against a number written months earlier. The range only ever had to name the
+floor.
+
 ## [0.1.1] — 2026-08-22
 
 The wire contract's two halves are now equal sets, not a pinned difference.
