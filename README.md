@@ -24,10 +24,10 @@ pip install git+https://github.com/usestapel/stapel-realtime
 
 | Fact | Value |
 |---|---|
-| Version | `0.1.2` |
+| Version | `0.1.3` |
 | Python | `>=3.11` (3.11, 3.12, 3.13) |
 | Config axes | 8 |
-| Usage surface | 17 |
+| Usage surface | 18 |
 | Extension points | 6 |
 | Fleet dependencies | [`stapel-core`](https://github.com/usestapel/stapel-core) |
 

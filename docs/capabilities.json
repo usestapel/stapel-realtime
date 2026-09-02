@@ -1,6 +1,6 @@
 {
   "module": "stapel-realtime",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "provides": "Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, and five system checks. No models, migrations, views, urls or comm surface of its own; it is installed as a Django app only so its checks are registered.",
   "axes": [
     {
@@ -172,6 +172,15 @@
       "kind": "factory",
       "path": "stapel_realtime.asgi.normalize_origin",
       "intent": "Canonicalize an Origin header or allowlist entry to scheme://host[:port], lower-cased with the scheme's default port elided. The port is identity: an allowlist entry of 'studio.localhost' never matching 'http://studio.localhost:8600' is the incident the origin guard and realtime.E003 exist for."
+    },
+    {
+      "name": "site_registry_origins",
+      "kind": "factory",
+      "path": "stapel_realtime.asgi.site_registry_origins",
+      "intent": "https://<host> for every host and alias in the stapel_core.sites registry — the origins OriginGuard unions into its allowlist so one image answers every registered brand host without a hand-list per socket. Empty when the registry is empty, broken (reported by stapel_core.sites.E001, not here) or the installed core predates it. Call it when assembling an allowlist by hand; the guard and realtime.W002 already read it.",
+      "instead_of": [
+        "re-listing the fleet's brand hosts in STAPEL_REALTIME['ALLOWED_ORIGINS']"
+      ]
     },
     {
       "name": "deny",

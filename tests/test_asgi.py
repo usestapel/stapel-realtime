@@ -109,6 +109,108 @@ class TestOriginGuard:
         assert sent[0]["code"] == CLOSE_FORBIDDEN
 
 
+#: A two-brand registry in the shape the fleet ships (sites.json).
+SITES = {
+    "sites": [
+        {"host": "darom.example", "aliases": ["www.darom.example"], "primary": True},
+        {"host": "ruberi.example", "aliases": ["www.ruberi.example"]},
+    ]
+}
+
+
+class TestOriginGuardSiteRegistry:
+    """The site registry drives the guard — no hand-list per host.
+
+    The incident this class exists for: a two-brand fleet whose chat socket
+    listed only the first brand's origin, so every browser on the second brand
+    got 403 and the product silently fell back to polling. Core's own socket
+    stack already unions ``STAPEL_SITES`` into its allowlist
+    (``stapel_core.django.jwt.ws_origin``); the realtime guard has to agree
+    with it, or the same deployment is guarded differently per socket.
+    """
+
+    @pytest.fixture
+    def spy(self):
+        seen = []
+
+        async def inner(scope, receive, send):
+            seen.append(scope)
+
+        inner.seen = seen
+        return inner
+
+    @pytest.fixture(autouse=True)
+    def _fresh_registry_cache(self):
+        from stapel_core.sites import reset_sites_cache
+
+        reset_sites_cache()
+        yield
+        reset_sites_cache()
+
+    def _scope(self, origin):
+        return {"type": "websocket", "headers": [(b"origin", origin.encode())]}
+
+    async def _run(self, guard, scope):
+        sent = []
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await guard(scope, receive, send)
+        return sent
+
+    async def test_every_registered_site_may_open_a_socket(self, spy, settings):
+        settings.STAPEL_SITES = SITES
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://darom.example"]}
+        guard = asgi.OriginGuard(spy)
+        await self._run(guard, self._scope("https://ruberi.example"))
+        assert len(spy.seen) == 1
+
+    async def test_aliases_are_origins_too(self, spy, settings):
+        settings.STAPEL_SITES = SITES
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
+        guard = asgi.OriginGuard(spy)
+        await self._run(guard, self._scope("https://www.ruberi.example"))
+        assert len(spy.seen) == 1
+
+    async def test_the_registry_augments_the_setting_not_replaces_it(
+        self, spy, settings
+    ):
+        settings.STAPEL_SITES = SITES
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["http://localhost:5173"]}
+        guard = asgi.OriginGuard(spy)
+        await self._run(guard, self._scope("http://localhost:5173"))
+        await self._run(guard, self._scope("https://darom.example"))
+        assert len(spy.seen) == 2
+
+    async def test_an_unregistered_origin_is_still_refused(self, spy, settings):
+        settings.STAPEL_SITES = SITES
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
+        guard = asgi.OriginGuard(spy)
+        sent = await self._run(guard, self._scope("https://evil.example"))
+        assert spy.seen == []
+        assert sent == [{"type": "websocket.close", "code": CLOSE_FORBIDDEN}]
+
+    async def test_an_explicit_override_stays_an_override(self, spy, settings):
+        """``allowed_origins=`` is the test seam; it must stay deterministic."""
+        settings.STAPEL_SITES = SITES
+        guard = asgi.OriginGuard(spy, allowed_origins=["https://app.example.com"])
+        sent = await self._run(guard, self._scope("https://ruberi.example"))
+        assert sent[0]["code"] == CLOSE_FORBIDDEN
+
+    async def test_a_broken_registry_contributes_nothing(self, spy, settings):
+        settings.STAPEL_SITES = {"sites": "not-a-list"}
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://app.example.com"]}
+        guard = asgi.OriginGuard(spy)
+        await self._run(guard, self._scope("https://app.example.com"))
+        sent = await self._run(guard, self._scope("https://ruberi.example"))
+        assert len(spy.seen) == 1
+        assert sent[0]["code"] == CLOSE_FORBIDDEN
+
+
 class TestDiscovery:
     def test_a_module_manifest_is_collected(self):
         patterns = asgi.collect_websocket_urlpatterns(

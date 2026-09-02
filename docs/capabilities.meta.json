@@ -119,6 +119,13 @@
     "register_transport": {
       "kind": "factory",
       "intent": "Register deliver() into the core's signal seam under the name 'channels'. Called from this package's AppConfig.ready(); a host that composes app config by hand and wants the axis to resolve calls it itself. Registration is not activation — the host still selects the transport, and the default stays 'none'."
+    },
+    "site_registry_origins": {
+      "kind": "factory",
+      "intent": "https://<host> for every host and alias in the stapel_core.sites registry — the origins OriginGuard unions into its allowlist so one image answers every registered brand host without a hand-list per socket. Empty when the registry is empty, broken (reported by stapel_core.sites.E001, not here) or the installed core predates it. Call it when assembling an allowlist by hand; the guard and realtime.W002 already read it.",
+      "instead_of": [
+        "re-listing the fleet's brand hosts in STAPEL_REALTIME['ALLOWED_ORIGINS']"
+      ]
     }
   }
 }

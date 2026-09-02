@@ -59,6 +59,33 @@ def normalize_origin(origin: str) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+def site_registry_origins() -> list:
+    """``https://<host>`` for every host and alias in the site registry.
+
+    A registered site IS an origin this deployment serves: one image answers
+    for N brand hosts (``stapel_core.sites``), and a guard that lists only the
+    first brand's origin locks every other brand's browser out of its own
+    socket — the failure reads as "chat works on host A, 403 on host B", and
+    the product silently degrades to polling. Core's socket stack already
+    unions the registry into its allowlist
+    (``stapel_core.django.jwt.ws_origin``); this keeps the realtime guard in
+    agreement with it, so one deployment cannot be guarded differently per
+    socket.
+
+    Never a widening: an empty or broken registry contributes nothing (the
+    breakage is reported by ``stapel_core.sites.E001``, not here), and a core
+    too old to have a registry contributes nothing either.
+    """
+    try:
+        from stapel_core.sites import SitesConfigError, registry_from_settings
+    except ImportError:  # stapel-core < 0.51 — no registry to read
+        return []
+    try:
+        return list(registry_from_settings().origins())
+    except SitesConfigError:
+        return []
+
+
 class OriginGuard:
     """ASGI middleware refusing WebSocket handshakes from unlisted origins.
 
@@ -87,10 +114,18 @@ class OriginGuard:
 
     @property
     def _configured(self) -> list:
-        raw = self._explicit
-        if raw is None:
-            raw = realtime_settings.ALLOWED_ORIGINS or []
-        return list(raw)
+        # An explicit list is a full override (the test seam) — the settings
+        # path unions the site registry in, because the registry and the
+        # setting answer different questions ("which hosts do we serve" vs
+        # "which extra origins may open a socket": a Vite dev server, a native
+        # shell) and a deployment that declares both means both.
+        if self._explicit is not None:
+            return list(self._explicit)
+        entries = list(realtime_settings.ALLOWED_ORIGINS or [])
+        for origin in site_registry_origins():
+            if origin not in entries:
+                entries.append(origin)
+        return entries
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "websocket":
@@ -197,4 +232,5 @@ __all__ = [
     "build_websocket_application",
     "collect_websocket_urlpatterns",
     "normalize_origin",
+    "site_registry_origins",
 ]

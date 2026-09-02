@@ -94,6 +94,21 @@ class TestAllowedOrigins:
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
         assert ids(checks.check_allowed_origins(None)) == ["realtime.W002"]
 
+    def test_a_site_registry_is_an_allowlist(self, settings):
+        """A fleet that declares its hosts in STAPEL_SITES has a guard —
+        W002 must not tell it otherwise."""
+        from stapel_core.sites import reset_sites_cache
+
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
+        settings.STAPEL_SITES = {
+            "sites": [{"host": "darom.example", "primary": True}]
+        }
+        reset_sites_cache()
+        try:
+            assert checks.check_allowed_origins(None) == []
+        finally:
+            reset_sites_cache()
+
     def test_a_bare_host_is_an_error(self, settings):
         """The studio bug, machine-checked: a guard that never matches."""
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["studio.localhost"]}

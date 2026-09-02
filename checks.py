@@ -12,7 +12,7 @@ import os
 
 from django.core.checks import Error, Warning as CheckWarning
 
-from .asgi import normalize_origin
+from .asgi import normalize_origin, site_registry_origins
 from .conf import realtime_settings
 
 #: Environment variables an ASGI server reads its worker count from.
@@ -117,14 +117,20 @@ def check_allowed_origins(app_configs, **kwargs):
     silently closed door — this is the exact incident the check is named for.
     """
     raw = realtime_settings.ALLOWED_ORIGINS or []
-    if not raw:
+    if not raw and not site_registry_origins():
+        # The site registry counts as an allowlist: OriginGuard unions it in,
+        # so a fleet that declares its hosts in STAPEL_SITES has a live guard
+        # even with the setting empty — warning it otherwise trains operators
+        # to keep a second hand-list the registry exists to retire.
         return [
             CheckWarning(
-                "STAPEL_REALTIME['ALLOWED_ORIGINS'] is empty — the WebSocket "
-                "origin guard is disabled and any page may open a socket "
+                "STAPEL_REALTIME['ALLOWED_ORIGINS'] is empty and no site "
+                "registry (STAPEL_SITES) is declared — the WebSocket origin "
+                "guard is disabled and any page may open a socket "
                 "(the JWT still gates who it belongs to).",
                 hint="List the exact origins WITH port, e.g. "
-                "['https://app.example.com', 'http://localhost:5173'].",
+                "['https://app.example.com', 'http://localhost:5173'], or "
+                "declare the deployment's hosts in the site registry.",
                 id="realtime.W002",
             )
         ]

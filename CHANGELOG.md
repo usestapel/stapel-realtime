@@ -4,6 +4,37 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.1.3] — 2026-09-02
+
+### Fixed — the site registry drives the origin guard
+
+A multibrand deployment (stapel-core 0.51's `stapel_core.sites`: one image, N
+brand hosts) declares its hosts once, and everything host-shaped derives from
+that declaration — `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, core's own
+WebSocket allowlist (`stapel_core.django.jwt.ws_origin` unions `STAPEL_SITES`
+in). Everything except this package's `OriginGuard`, which read only
+`STAPEL_REALTIME["ALLOWED_ORIGINS"]` — so a fleet whose chat socket listed the
+first brand's origin served the second brand a 403 on every handshake, and the
+product silently degraded to polling. The same deployment was guarded
+differently per socket, which is the exact two-lists-that-can-disagree failure
+the 0.44.1 core note warns about.
+
+`OriginGuard` now unions the site registry's origins (every host and alias,
+`https://`-schemed) into the configured allowlist, exactly as core does:
+
+- The setting still answers "which *extra* origins may open a socket" (a Vite
+  dev server, a native shell); the registry answers "which hosts do we serve".
+  A deployment that declares both means both.
+- Never a widening: an empty or broken registry contributes nothing (the
+  breakage stays reported by `stapel_core.sites.E001`), a core older than the
+  registry contributes nothing, and an explicit `allowed_origins=` argument
+  remains a full override — the test seam stays deterministic.
+- `realtime.W002` now stays silent when the registry supplies the allowlist:
+  a fleet that declared its hosts has a live guard, and warning it otherwise
+  trains operators to keep the second hand-list the registry exists to retire.
+- New public helper `site_registry_origins()` for anyone assembling an
+  allowlist by hand.
+
 ## [0.1.2] — 2026-08-24
 
 ### Fixed — the substrate pinned one minor of the core and froze everyone on it

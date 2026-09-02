@@ -1,8 +1,8 @@
-# stapel-realtime 0.1.2
+# stapel-realtime 0.1.3
 
 Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, and five system checks. No models, migrations, views, urls or comm surface of its own; it is installed as a Django app only so its checks are registered.
 
-Contract: axes 8 · surface 17 · extension points 6.
+Contract: axes 8 · surface 18 · extension points 6.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
@@ -68,6 +68,9 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   Parse a canonical key into its module/scope_type/scope_id/topic parts, raising InvalidStreamKey on anything else. This is how an authorizer learns which workspace it is being asked about — a consumer that cannot parse its own stream key must close the socket, not guess a scope.
 - register_transport — stapel_realtime.delivery.register_transport
   Register deliver() into the core's signal seam under the name 'channels'. Called from this package's AppConfig.ready(); a host that composes app config by hand and wants the axis to resolve calls it itself. Registration is not activation — the host still selects the transport, and the default stays 'none'.
+- site_registry_origins — stapel_realtime.asgi.site_registry_origins
+  instead of: re-listing the fleet's brand hosts in STAPEL_REALTIME['ALLOWED_ORIGINS']
+  https://<host> for every host and alias in the stapel_core.sites registry — the origins OriginGuard unions into its allowlist so one image answers every registered brand host without a hand-list per socket. Empty when the registry is empty, broken (reported by stapel_core.sites.E001, not here) or the installed core predates it. Call it when assembling an allowlist by hand; the guard and realtime.W002 already read it.
 - workspace_stream — stapel_realtime.streams.workspace_stream
   Shorthand for the common shape, <module>:ws:<workspace_id>[:<topic>] — the key form the WorkspaceCapability authorizer understands.
 
