@@ -112,8 +112,8 @@ class TestOriginGuard:
 #: A two-brand registry in the shape the fleet ships (sites.json).
 SITES = {
     "sites": [
-        {"host": "darom.example", "aliases": ["www.darom.example"], "primary": True},
-        {"host": "ruberi.example", "aliases": ["www.ruberi.example"]},
+        {"host": "brand-a.example", "aliases": ["www.brand-a.example"], "primary": True},
+        {"host": "brand-b.example", "aliases": ["www.brand-b.example"]},
     ]
 }
 
@@ -164,16 +164,16 @@ class TestOriginGuardSiteRegistry:
 
     async def test_every_registered_site_may_open_a_socket(self, spy, settings):
         settings.STAPEL_SITES = SITES
-        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://darom.example"]}
+        settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://brand-a.example"]}
         guard = asgi.OriginGuard(spy)
-        await self._run(guard, self._scope("https://ruberi.example"))
+        await self._run(guard, self._scope("https://brand-b.example"))
         assert len(spy.seen) == 1
 
     async def test_aliases_are_origins_too(self, spy, settings):
         settings.STAPEL_SITES = SITES
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
         guard = asgi.OriginGuard(spy)
-        await self._run(guard, self._scope("https://www.ruberi.example"))
+        await self._run(guard, self._scope("https://www.brand-b.example"))
         assert len(spy.seen) == 1
 
     async def test_the_registry_augments_the_setting_not_replaces_it(
@@ -183,7 +183,7 @@ class TestOriginGuardSiteRegistry:
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["http://localhost:5173"]}
         guard = asgi.OriginGuard(spy)
         await self._run(guard, self._scope("http://localhost:5173"))
-        await self._run(guard, self._scope("https://darom.example"))
+        await self._run(guard, self._scope("https://brand-a.example"))
         assert len(spy.seen) == 2
 
     async def test_an_unregistered_origin_is_still_refused(self, spy, settings):
@@ -198,7 +198,7 @@ class TestOriginGuardSiteRegistry:
         """``allowed_origins=`` is the test seam; it must stay deterministic."""
         settings.STAPEL_SITES = SITES
         guard = asgi.OriginGuard(spy, allowed_origins=["https://app.example.com"])
-        sent = await self._run(guard, self._scope("https://ruberi.example"))
+        sent = await self._run(guard, self._scope("https://brand-b.example"))
         assert sent[0]["code"] == CLOSE_FORBIDDEN
 
     async def test_a_broken_registry_contributes_nothing(self, spy, settings):
@@ -206,7 +206,7 @@ class TestOriginGuardSiteRegistry:
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://app.example.com"]}
         guard = asgi.OriginGuard(spy)
         await self._run(guard, self._scope("https://app.example.com"))
-        sent = await self._run(guard, self._scope("https://ruberi.example"))
+        sent = await self._run(guard, self._scope("https://brand-b.example"))
         assert len(spy.seen) == 1
         assert sent[0]["code"] == CLOSE_FORBIDDEN
 

@@ -101,7 +101,7 @@ class TestAllowedOrigins:
 
         settings.STAPEL_REALTIME = {"ALLOWED_ORIGINS": []}
         settings.STAPEL_SITES = {
-            "sites": [{"host": "darom.example", "primary": True}]
+            "sites": [{"host": "brand-a.example", "primary": True}]
         }
         reset_sites_cache()
         try:
