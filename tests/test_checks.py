@@ -61,8 +61,71 @@ class TestLayerSocketTimeout:
         }
         assert ids(checks.check_layer_socket_timeout(None)) == ["realtime.E002"]
 
-    def test_unset_is_the_recommended_answer(self, settings):
+    def test_unset_inherits_the_library_default_and_redis_8_made_it_lethal(
+        self, settings, monkeypatch
+    ):
+        """"Unset" is not a value — it is whatever the installed redis-py
+        ships, and 8.0 changed that from "block forever" to FIVE SECONDS
+        (redis.asyncio.connection.DEFAULT_SOCKET_TIMEOUT). A check that
+        blessed unset was green on a deployment whose every idle consumer
+        died mid-BZPOPMIN — the gate was blind to the device it guarded.
+        """
         settings.CHANNEL_LAYERS = {"default": {"BACKEND": REDIS, "CONFIG": {}}}
+        monkeypatch.setattr(checks, "_redis_library_default_timeout", lambda: 5.0)
+        problems = checks.check_layer_socket_timeout(None)
+        assert ids(problems) == ["realtime.E002"]
+        assert "redis-py" in problems[0].msg
+
+    def test_unset_is_fine_where_the_library_blocks_forever(
+        self, settings, monkeypatch
+    ):
+        """redis-py < 8 (or a future one that reverts): no default timeout,
+        nothing to warn about."""
+        settings.CHANNEL_LAYERS = {"default": {"BACKEND": REDIS, "CONFIG": {}}}
+        monkeypatch.setattr(checks, "_redis_library_default_timeout", lambda: None)
+        assert checks.check_layer_socket_timeout(None) == []
+
+    def test_an_explicit_none_disables_the_timeout_and_the_check_agrees(
+        self, settings
+    ):
+        settings.CHANNEL_LAYERS = {
+            "default": {"BACKEND": REDIS, "CONFIG": {"socket_timeout": None}}
+        }
+        assert checks.check_layer_socket_timeout(None) == []
+
+    def test_it_reads_the_hosts_dict_shape_channels_redis_actually_forwards(
+        self, settings
+    ):
+        """`{"hosts": [{"address": …, "socket_timeout": 5}]}` is the form
+        channels-redis forwards to ConnectionPool.from_url — the one shape
+        an operator setting a per-host timeout actually writes, and the one
+        this check could not see."""
+        settings.CHANNEL_LAYERS = {
+            "default": {
+                "BACKEND": REDIS,
+                "CONFIG": {
+                    "hosts": [{"address": "redis://redis:6379/2", "socket_timeout": 5}]
+                },
+            }
+        }
+        assert ids(checks.check_layer_socket_timeout(None)) == ["realtime.E002"]
+
+    def test_a_hosts_dict_explicit_none_is_the_recommended_fix(
+        self, settings, monkeypatch
+    ):
+        """The fleet fix for the redis-8 default: state None per host. The
+        check must read that as "blocking restored", not as "unset"."""
+        settings.CHANNEL_LAYERS = {
+            "default": {
+                "BACKEND": REDIS,
+                "CONFIG": {
+                    "hosts": [
+                        {"address": "redis://redis:6379/2", "socket_timeout": None}
+                    ]
+                },
+            }
+        }
+        monkeypatch.setattr(checks, "_redis_library_default_timeout", lambda: 5.0)
         assert checks.check_layer_socket_timeout(None) == []
 
     def test_a_timeout_above_the_expiry_floor_passes(self, settings):

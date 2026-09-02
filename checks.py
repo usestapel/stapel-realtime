@@ -72,14 +72,49 @@ def check_channel_layer(app_configs, **kwargs):
     return []
 
 
+def _redis_library_default_timeout():
+    """What ``socket_timeout`` means when nobody sets it.
+
+    redis-py 8.0 changed the answer from ``None`` (block forever — what a
+    consumer parked in BZPOPMIN needs) to FIVE SECONDS
+    (``redis.asyncio.connection.DEFAULT_SOCKET_TIMEOUT``), and channels-redis
+    forwards no value of its own, so an unconfigured deployment inherits
+    whatever is installed. Read from the library that will actually run,
+    never hard-coded: a check that asserts 8.x behaviour against a 7.x
+    install (or vice versa) is wrong in the direction that matters.
+    ``None`` means "blocks forever" — no redis installed reads the same,
+    because a layer that cannot import redis fails long before a timeout.
+    """
+    try:
+        from redis.asyncio.connection import DEFAULT_SOCKET_TIMEOUT
+    except ImportError:
+        return None
+    if DEFAULT_SOCKET_TIMEOUT is None:
+        return None
+    try:
+        return float(DEFAULT_SOCKET_TIMEOUT)
+    except (TypeError, ValueError):  # a sentinel object — treat as unknown
+        return None
+
+
 def check_layer_socket_timeout(app_configs, **kwargs):
     """E002 — the redis timeout that kills a parked consumer.
 
-    ``channels_redis`` waits for messages in a blocking ``BZPOPMIN``. redis-py
-    8 defaults ``socket_timeout`` to five seconds, so the client tears the
+    ``channels_redis`` waits for messages in a blocking ``BZPOPMIN``. A
+    finite ``socket_timeout`` below the layer's own rhythm tears the
     connection down mid-wait and the consumer dies on an idle stream — which
     looks exactly like "realtime is flaky" and never like a config value.
-    Require it unset, or comfortably above the layer's own expiry.
+
+    Three places the value can live, and the check reads all three: the
+    CONFIG dict itself, ``connection_kwargs``, and each ``hosts`` entry
+    written as a dict — the shape channels-redis actually forwards to
+    ``ConnectionPool.from_url``, and the one this check could not see while
+    a live fleet's every idle consumer died 4.9 s into its wait. And one
+    place it can live invisibly: UNSET. redis-py 8 defaults it to five
+    seconds (:func:`_redis_library_default_timeout` asks the installed
+    library), so "nobody set it" stopped being the safe answer the day that
+    library landed — state ``socket_timeout: None`` explicitly to restore
+    blocking, or a number above the layer's expiry.
     """
     layer = _default_layer()
     backend = layer.get("BACKEND") or ""
@@ -90,10 +125,18 @@ def check_layer_socket_timeout(app_configs, **kwargs):
     floor = realtime_settings.LAYER_SOCKET_TIMEOUT_MIN
     floor = float(floor) if floor is not None else expiry + 10
 
+    sources = [config, config.get("connection_kwargs") or {}]
+    hosts = config.get("hosts")
+    if isinstance(hosts, (list, tuple)):
+        sources.extend(h for h in hosts if isinstance(h, dict))
+
     problems = []
-    for source in (config, config.get("connection_kwargs") or {}):
+    stated_anywhere = False
+    for source in sources:
+        if "socket_timeout" in source:
+            stated_anywhere = True
         timeout = source.get("socket_timeout")
-        if timeout is None:
+        if timeout is None:  # explicit None = blocking restored; absent = see below
             continue
         if float(timeout) < floor:
             problems.append(
@@ -101,8 +144,28 @@ def check_layer_socket_timeout(app_configs, **kwargs):
                     f"Channel layer socket_timeout={timeout}s is below the "
                     f"{floor}s floor: a consumer blocked in BZPOPMIN will be "
                     "disconnected while simply waiting for a message.",
-                    hint="Drop socket_timeout (recommended) or raise it above "
-                    "the layer's expiry; redis-py >= 8 defaults it to 5s.",
+                    hint="Set socket_timeout: None on the hosts entry to "
+                    "restore blocking reads, or raise the value above the "
+                    "layer's expiry.",
+                    id="realtime.E002",
+                )
+            )
+
+    if not problems and not stated_anywhere:
+        inherited = _redis_library_default_timeout()
+        if inherited is not None and inherited < floor:
+            problems.append(
+                Error(
+                    f"Channel layer sets no socket_timeout, and the installed "
+                    f"redis-py defaults it to {inherited:g}s — below the "
+                    f"{floor}s floor. Every consumer parked in BZPOPMIN is "
+                    "disconnected while simply waiting for a message; the "
+                    "browser sees a websocket that quietly reconnects "
+                    "forever. redis-py 8.0 changed this default; nothing in "
+                    "this deployment chose it.",
+                    hint='Write the hosts entry as a dict and state it: '
+                    '{"address": "<url>", "socket_timeout": None} to restore '
+                    "blocking reads, or a number above the layer's expiry.",
                     id="realtime.E002",
                 )
             )

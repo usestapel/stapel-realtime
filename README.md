@@ -24,7 +24,7 @@ pip install git+https://github.com/usestapel/stapel-realtime
 
 | Fact | Value |
 |---|---|
-| Version | `0.1.3` |
+| Version | `0.1.4` |
 | Python | `>=3.11` (3.11, 3.12, 3.13) |
 | Config axes | 8 |
 | Usage surface | 18 |

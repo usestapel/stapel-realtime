@@ -4,6 +4,28 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.1.4] — 2026-09-02
+
+### Fixed — realtime.E002 was blind to the deployment it guarded
+
+Two blind spots, found on a live fleet whose every idle consumer died 4.9 s
+into its wait while the check stayed green:
+
+- **"Unset" stopped being a value.** redis-py 8.0 defaults `socket_timeout`
+  to five seconds (`redis.asyncio.connection.DEFAULT_SOCKET_TIMEOUT`);
+  channels-redis forwards no value of its own, so an unconfigured layer
+  inherits whatever is installed — and the check blessed unset as the
+  recommended answer. It now asks the installed library what unset means
+  and fails E-level when that inherited default sits below the floor.
+  The message says redis-py chose the number, because nothing in the
+  deployment did.
+- **The hosts-dict shape was invisible.** `{"hosts": [{"address": …,
+  "socket_timeout": …}]}` is the form channels-redis actually forwards to
+  `ConnectionPool.from_url` — the one an operator setting a per-host value
+  writes — and the check read only `CONFIG` and `connection_kwargs`. All
+  three shapes are read now; an explicit `socket_timeout: None` (the fix:
+  blocking reads restored) is honoured in every one of them.
+
 ## [0.1.3] — 2026-09-02
 
 ### Fixed — the site registry drives the origin guard
