@@ -4,6 +4,23 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.2.1] — 2026-09-06
+
+### Fixed — realtime.W004 was judging sockets against the wrong prefix
+
+`STAPEL_REALTIME["URL_PREFIX"]` fell through `AppSettings`'s general
+flat-setting fallback to the bare Django setting `URL_PREFIX` — which every
+stapel service already defines as its own HTTP mount (`"chat/"`, ...), not a
+websocket prefix. With no namespaced value set, `realtime.W004` had been
+silently checking `ws/chat/inbox` against `chat/` on every deployment, so
+nothing was ever mounted from the value operators thought they had set.
+
+`stapel_realtime.conf.url_prefix()` now reads `STAPEL_REALTIME["URL_PREFIX"]`
+only, defaulting to `"ws"`, and never falls back to the bare name; a new
+`realtime.W007` warns for one release when a deployment still has only the
+bare setting present, naming both keys, before the fallback wording is
+removed for good.
+
 ## [0.2.0] — 2026-09-05
 
 ### Added — the fleet can finally ask "is this person watching right now?"

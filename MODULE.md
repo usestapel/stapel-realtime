@@ -37,7 +37,7 @@ everything the frame touches after that call lives here:
   `realtime.is_live` and `realtime.live_batch` Functions. The substrate is the
   only place that knows which sockets are open, so the oracle lives here rather
   than in the module that happens to need it first.
-- Seven system checks.
+- Eight system checks.
 - `stapel_realtime.testing` — the Channels test client for module consumers.
 
 **Contract of a Signal** (do not design around anything stronger):
@@ -59,7 +59,10 @@ everything the frame touches after that call lives here:
 ### Settings (`STAPEL_REALTIME`)
 
 Resolution per key: `settings.STAPEL_REALTIME` dict → flat setting → env →
-default. Full table with sources in [CONFIG.MD](CONFIG.MD).
+default. **`URL_PREFIX` is the one exception** — it reads the namespaced
+dict only, never a flat `URL_PREFIX` setting (every service's own HTTP
+mount collides with that name; `realtime.W007` warns for one release).
+Full table with sources in [CONFIG.MD](CONFIG.MD).
 
 | Key | Default | What it customizes |
 |---|---|---|
@@ -70,7 +73,7 @@ default. Full table with sources in [CONFIG.MD](CONFIG.MD).
 | `AUTHORIZE_CACHE_S` | `30` | How long a subscription verdict is reused within one socket. |
 | `PRESENCE_TTL_S` | `60` | Presence lease length. Must stay above `HEARTBEAT_S` (`realtime.W006`); `0` disables the registry. |
 | `ALLOWED_ORIGINS` | `[]` | Exact origins **with port**. Empty disables the guard (`realtime.W002`). |
-| `URL_PREFIX` | `"ws"` | Edge convention for socket routes (`realtime.W004`). |
+| `URL_PREFIX` | `"ws"` | Edge convention for socket routes (`realtime.W004`). Namespaced key only — never a flat `URL_PREFIX` setting (`realtime.W007`). |
 | `LAYER_SOCKET_TIMEOUT_MIN` | `None` | Floor for the redis layer's `socket_timeout`; `None` derives it from `expiry + 10` (`realtime.E002`). |
 
 ### `authorize()` — the required hook (fail-closed)
@@ -213,6 +216,7 @@ credentials.
 | `realtime.W004` | warning | A socket route outside `/<URL_PREFIX>/<module>/…` |
 | `realtime.W005` | warning | The default cache is locmem or dummy — presence is per-process, or stored nowhere |
 | `realtime.W006` | warning | `PRESENCE_TTL_S` is 0, or `HEARTBEAT_S` is not below it — the lease expires between two beats |
+| `realtime.W007` | warning | A bare `URL_PREFIX` Django setting is present and `STAPEL_REALTIME['URL_PREFIX']` is not — one-release pointer to the retired fallback |
 
 ---
 

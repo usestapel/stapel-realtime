@@ -59,18 +59,25 @@ class TestArtifactsExist:
         assert schema["properties"]["v"]["const"] == 1
 
     def test_every_axis_matches_a_real_setting(self):
-        """A documented axis nobody reads is worse than an undocumented one."""
-        from stapel_realtime.conf import realtime_settings
+        """A documented axis nobody reads is worse than an undocumented one.
+
+        ``NON_APPSETTINGS_AXES`` is the one deliberate exception: URL_PREFIX
+        is real and documented, but reads through
+        ``stapel_realtime.conf.url_prefix()`` rather than
+        ``realtime_settings``, precisely so it does NOT inherit
+        ``AppSettings``'s flat-setting fallback (realtime.W004/W007).
+        """
+        from stapel_realtime.conf import NON_APPSETTINGS_AXES, realtime_settings
 
         capabilities = json.loads((REPO / "docs" / "capabilities.json").read_text())
         documented = {axis["key"] for axis in capabilities["axes"]}
-        assert documented == set(realtime_settings.defaults)
+        assert documented == set(realtime_settings.defaults) | NON_APPSETTINGS_AXES
 
     def test_config_md_documents_every_axis(self):
         config_md = (REPO / "CONFIG.MD").read_text()
-        from stapel_realtime.conf import realtime_settings
+        from stapel_realtime.conf import NON_APPSETTINGS_AXES, realtime_settings
 
-        for key in realtime_settings.defaults:
+        for key in set(realtime_settings.defaults) | NON_APPSETTINGS_AXES:
             assert f"| {key} |" in config_md, f"{key} is missing from CONFIG.MD"
 
 

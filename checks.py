@@ -13,7 +13,10 @@ import os
 from django.core.checks import Error, Warning as CheckWarning
 
 from .asgi import normalize_origin, site_registry_origins
-from .conf import realtime_settings
+from .conf import URL_PREFIX_DEFAULT, realtime_settings, url_prefix
+
+#: Sentinel distinct from any real setting value, including ``None``.
+_UNSET = object()
 
 #: Environment variables an ASGI server reads its worker count from.
 _WORKER_ENV_VARS = ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS")
@@ -238,7 +241,7 @@ def check_route_prefix(app_configs, **kwargs):
     """
     from .asgi import collect_websocket_urlpatterns
 
-    prefix = str(realtime_settings.URL_PREFIX or "ws").strip("/")
+    prefix = url_prefix().strip("/")
     problems = []
     for pattern in collect_websocket_urlpatterns():
         route = str(getattr(getattr(pattern, "pattern", None), "_route", "") or "")
@@ -253,6 +256,40 @@ def check_route_prefix(app_configs, **kwargs):
                 )
             )
     return problems
+
+
+def check_bare_url_prefix(app_configs, **kwargs):
+    """W007 — a deployment still relying on the retired bare-setting fallback.
+
+    One release's worth of pointer, named for both settings, then nothing:
+    ``STAPEL_REALTIME["URL_PREFIX"]`` is the only value :func:`check_route_prefix`
+    reads now (:func:`stapel_realtime.conf.url_prefix`). Fires only when the
+    bare ``URL_PREFIX`` Django setting is present AND the namespaced key is
+    absent — a deployment that already migrated, or that never set either
+    (and gets the "ws" default), is silent.
+    """
+    from django.conf import settings
+
+    overrides = getattr(settings, realtime_settings.namespace, None) or {}
+    if "URL_PREFIX" in overrides:
+        return []
+    bare = getattr(settings, "URL_PREFIX", _UNSET)
+    if bare is _UNSET:
+        return []
+    return [
+        CheckWarning(
+            f"STAPEL_REALTIME['URL_PREFIX'] is unset, and the bare Django "
+            f"setting URL_PREFIX={bare!r} is present. This module used to "
+            "read that bare setting as the websocket prefix — which is "
+            "actually every stapel service's HTTP mount — so realtime.W004 "
+            "silently judged socket routes against the wrong value. The "
+            f"fallback is now removed and the default is {URL_PREFIX_DEFAULT!r}.",
+            hint="Set STAPEL_REALTIME['URL_PREFIX'] explicitly if this "
+            "deployment needs something other than 'ws'; otherwise this "
+            "warning is safe to ignore once removed in a later release.",
+            id="realtime.W007",
+        )
+    ]
 
 
 def _presence_cache_backend() -> str:
@@ -359,6 +396,7 @@ ALL_CHECKS = (
     check_allowed_origins,
     check_heartbeat,
     check_route_prefix,
+    check_bare_url_prefix,
     check_presence_cache,
     check_presence_ttl,
 )
@@ -375,6 +413,7 @@ def register_checks() -> None:
 __all__ = [
     "ALL_CHECKS",
     "check_allowed_origins",
+    "check_bare_url_prefix",
     "check_channel_layer",
     "check_heartbeat",
     "check_layer_socket_timeout",

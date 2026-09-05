@@ -228,6 +228,52 @@ class TestRoutePrefix:
         assert ids(problems) == ["realtime.W004"]
         assert "sockets/offside" in problems[0].msg
 
+    def test_a_bare_url_prefix_setting_is_never_read(self, settings, monkeypatch):
+        """The fleet-measured collision: every stapel service already sets a
+        bare URL_PREFIX for its own HTTP mount. With no namespaced value the
+        default ('ws') must win, never that unrelated setting — a canonical
+        'ws/...' route must stay silent even though the bare setting reads
+        'chat/'."""
+        from stapel_realtime.tests.fake_module.routing import websocket_urlpatterns
+
+        settings.STAPEL_REALTIME = {}
+        settings.URL_PREFIX = "chat/"
+        monkeypatch.setattr(
+            "stapel_realtime.asgi.collect_websocket_urlpatterns",
+            lambda: websocket_urlpatterns,
+        )
+        assert checks.check_route_prefix(None) == []
+
+    def test_the_namespaced_value_is_honoured(self, settings, monkeypatch):
+        from stapel_realtime.tests.offside_module.routing import websocket_urlpatterns
+
+        # offside_module mounts under 'sockets/offside/...'
+        settings.STAPEL_REALTIME = {"URL_PREFIX": "sockets"}
+        monkeypatch.setattr(
+            "stapel_realtime.asgi.collect_websocket_urlpatterns",
+            lambda: websocket_urlpatterns,
+        )
+        assert checks.check_route_prefix(None) == []
+
+
+class TestBareUrlPrefix:
+    def test_silent_when_neither_setting_is_present(self, settings):
+        settings.STAPEL_REALTIME = {}
+        assert checks.check_bare_url_prefix(None) == []
+
+    def test_silent_when_the_namespaced_value_is_set(self, settings):
+        settings.STAPEL_REALTIME = {"URL_PREFIX": "ws"}
+        settings.URL_PREFIX = "chat/"
+        assert checks.check_bare_url_prefix(None) == []
+
+    def test_warns_when_only_the_bare_setting_is_present(self, settings):
+        settings.STAPEL_REALTIME = {}
+        settings.URL_PREFIX = "chat/"
+        problems = checks.check_bare_url_prefix(None)
+        assert ids(problems) == ["realtime.W007"]
+        assert "STAPEL_REALTIME['URL_PREFIX']" in problems[0].msg
+        assert "URL_PREFIX='chat/'" in problems[0].msg
+
 
 LOCMEM = "django.core.cache.backends.locmem.LocMemCache"
 DUMMY = "django.core.cache.backends.dummy.DummyCache"

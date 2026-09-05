@@ -10,7 +10,7 @@
 [![license](https://img.shields.io/github/license/usestapel/stapel-realtime)](https://github.com/usestapel/stapel-realtime/blob/main/LICENSE)
 [![llms.txt](https://img.shields.io/badge/llms.txt-blue)](https://github.com/usestapel/stapel-realtime/blob/main/docs/llms.txt)
 
-> Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, the fleet's presence oracle, and seven system checks. Presence is a TTL lease in the fleet-shared cache (stapel_core.core.fleet_cache), written by the base consumer on connect, on every heartbeat tick and on disconnect — no model, no migration — and read by two comm Functions: realtime.is_live {user_id, family?} -> {live, sessions, last_seen} and realtime.live_batch {user_ids[<=100], family?} -> {users: {id: {...}}}. That pair is the whole comm surface; there are no models, migrations, views or urls, and no HTTP route of its own, so a peer asks over the bus like any other Function. It is installed as a Django app so the checks and the Functions are registered.
+> Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, the fleet's presence oracle, and eight system checks. Presence is a TTL lease in the fleet-shared cache (stapel_core.core.fleet_cache), written by the base consumer on connect, on every heartbeat tick and on disconnect — no model, no migration — and read by two comm Functions: realtime.is_live {user_id, family?} -> {live, sessions, last_seen} and realtime.live_batch {user_ids[<=100], family?} -> {users: {id: {...}}}. That pair is the whole comm surface; there are no models, migrations, views or urls, and no HTTP route of its own, so a peer asks over the bus like any other Function. It is installed as a Django app so the checks and the Functions are registered.
 
 Part of the [Stapel framework](https://github.com/usestapel) — composable Django apps that deploy as a monolith or as microservices without changing module code.
 
@@ -24,7 +24,7 @@ pip install stapel-realtime
 
 | Fact | Value |
 |---|---|
-| Version | `0.2.0` |
+| Version | `0.2.1` |
 | Python | `>=3.11` (3.11, 3.12, 3.13) |
 | Config axes | 9 |
 | Usage surface | 23 |

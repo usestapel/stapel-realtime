@@ -34,7 +34,7 @@ canon a package's keys are unprefixed inside its own namespace, so they are
 | AUTHORIZE_CACHE_S | env | seconds an `authorize()` verdict is reused for the same (user, stream) within one socket; the acknowledged ceiling on the residual leak window for non-revoke paths. | no | 30 |
 | PRESENCE_TTL_S | env | seconds one live session counts for without a refresh — the presence lease the base consumer renews on every heartbeat tick. Must stay above `HEARTBEAT_S` (realtime.W006); 0 disables the registry and `realtime.is_live` then answers "not live" for everyone. | no | 60 |
 | ALLOWED_ORIGINS | env | exact origins WITH port that may open a socket; empty disables the guard (realtime.W002), a malformed entry is realtime.E003. | no | [] |
-| URL_PREFIX | env | edge convention socket routes live under (`/ws/<mod>/…`), asserted by realtime.W004. | no | ws |
+| URL_PREFIX | namespace only | edge convention socket routes live under (`/ws/<mod>/…`), asserted by realtime.W004. **Not** routed through `realtime_settings` / `AppSettings`: a bare Django setting of the same name is every stapel service's own HTTP mount prefix, so the general flat-setting fallback silently judged sockets against it (fleet-measured — nothing was ever mounted correctly). `stapel_realtime.conf.url_prefix()` reads `STAPEL_REALTIME["URL_PREFIX"]` only; a bare `URL_PREFIX` present without it is realtime.W007, for one release. | no | ws |
 | LAYER_SOCKET_TIMEOUT_MIN | env | floor for the redis channel layer's `socket_timeout`; `None` derives it from the layer's `expiry + 10` (realtime.E002). | no | None |
 
 ## Settings this library reads but does not own

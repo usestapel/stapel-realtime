@@ -10,6 +10,15 @@ The spec (tasks/stapel-realtime-design.md §4.1) names two of these axes
 settings canon a package's keys are unprefixed inside its own namespace, so
 they are ``STAPEL_REALTIME["HEARTBEAT_S"]`` and
 ``STAPEL_REALTIME["MAX_REPLAY"]`` here — same axes, canonical spelling.
+
+``URL_PREFIX`` is the one deliberate exception to that resolution order —
+see :func:`url_prefix` below. It is NOT in ``defaults``: an ``AppSettings``
+key falls back to the bare Django setting of the same name, and every
+stapel service already defines a bare ``URL_PREFIX`` for its own HTTP mount
+(``"chat/"``, ...). Fleet-measured: with no namespaced value, this module's
+W004 check was silently judging websocket routes against that unrelated
+HTTP prefix on every deployment, and nothing was ever mounted from the
+value operators thought they had set.
 """
 from stapel_core.conf import AppSettings
 
@@ -59,10 +68,6 @@ realtime_settings = AppSettings(
         # studio incident this check exists for was an allowlist entry of
         # ``studio.localhost`` never matching ``http://studio.localhost:8600``.
         "ALLOWED_ORIGINS": [],
-        # URL prefix every module's websocket_urlpatterns lives under
-        # (``/ws/<mod>/...``, substrate §1.5). Used by the routing helpers
-        # and asserted by a system check.
-        "URL_PREFIX": "ws",
         # ── channel layer ────────────────────────────────────────────────
         # Minimum acceptable redis ``socket_timeout`` for the channel layer,
         # in seconds; ``None`` derives it from the layer's ``expiry``.
@@ -73,4 +78,42 @@ realtime_settings = AppSettings(
     import_strings=(),
 )
 
-__all__ = ["realtime_settings"]
+#: Documented axes deliberately kept OUT of ``realtime_settings.defaults`` —
+#: each one names a bare Django setting the fleet already gives an unrelated
+#: meaning, so ``AppSettings``'s generic flat-setting fallback would silently
+#: misread it (this is that incident's fix). Read via a dedicated function
+#: instead; the contract test that pairs documented axes with real settings
+#: consults this set to know the exception is deliberate, not a doc gone stale.
+NON_APPSETTINGS_AXES = frozenset({"URL_PREFIX"})
+
+#: Default when no deployment states a value at all.
+URL_PREFIX_DEFAULT = "ws"
+
+
+def url_prefix() -> str:
+    """``STAPEL_REALTIME["URL_PREFIX"]`` — never the bare Django setting.
+
+    Deliberately bypasses ``realtime_settings`` / ``AppSettings`` for this
+    one key. That class's general flat-setting fallback is a legacy
+    convenience for genuinely namespaced keys; here the bare name
+    ``URL_PREFIX`` is not namespaced at all — it is the HTTP mount prefix
+    every stapel service already sets for itself. Reading it as the
+    websocket prefix was never correct, only silent (realtime.W004 judged
+    ``ws/chat/inbox`` against ``chat/`` and never matched). See
+    :func:`stapel_realtime.checks.check_bare_url_prefix` (realtime.W007)
+    for the one-release warning to deployments that relied on the fallback.
+    """
+    from django.conf import settings
+
+    overrides = getattr(settings, realtime_settings.namespace, None) or {}
+    if "URL_PREFIX" in overrides:
+        return str(overrides["URL_PREFIX"])
+    return URL_PREFIX_DEFAULT
+
+
+__all__ = [
+    "NON_APPSETTINGS_AXES",
+    "URL_PREFIX_DEFAULT",
+    "realtime_settings",
+    "url_prefix",
+]
