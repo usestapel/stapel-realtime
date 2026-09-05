@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "realtime.live_batch",
+  "description": "realtime.is_live for many users in one round trip: {\"user_ids\": [...], \"family\": \"...\"?} -> {\"users\": {user_id: {\"live\", \"sessions\", \"last_seen\"}}}. EVERY id supplied comes back, including one nobody has ever seen (as the offline snapshot) rather than being omitted: the caller is holding that id for a reason and must be told the answer, not left to infer it from an absence. Capped at 100 ids — this is the read a notifier makes before fanning out to a group, not a way to enumerate the fleet.",
+  "type": "object",
+  "required": ["user_ids"],
+  "properties": {
+    "user_ids": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Users to answer for. Every id supplied appears in the answer."
+    },
+    "family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stream family to count, i.e. the module segment of the stream key. Absent means every family."
+    }
+  },
+  "additionalProperties": false
+}

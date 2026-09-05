@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-realtime"
-version = "0.1.4"
+version = "0.2.0"
 description = "Realtime delivery substrate for the Stapel framework — the Signal primitive on the wire"
 readme = "README.md"
 license = { text = "MIT" }
@@ -45,7 +45,16 @@ dependencies = [
     # moment either half grows a type the other does not know, which is the
     # exact break the pin was standing in for. The range only has to name the
     # floor.
-    "stapel-core>=0.33.2,<1.0",
+    #
+    # 0.2.0 moves that floor from 0.33.2 to 0.45.0 for a second, equally
+    # non-negotiable reason: the presence registry writes through
+    # `stapel_core.core.fleet_cache`, which 0.45.0 extracted. Plain
+    # `django.core.cache` is namespaced per service by KEY_PREFIX, and the
+    # service holding the socket is never guaranteed to be the service asking
+    # whether that user is live — written there, the oracle would answer "no"
+    # from every peer, which is the exact per-service illusion fleet_cache
+    # exists to end. A floor, not a preference.
+    "stapel-core>=0.45.0,<1.0",
 ]
 
 [project.urls]
@@ -59,7 +68,7 @@ Issues = "https://github.com/usestapel/stapel-realtime/issues"
 # The envelope, the stream-key canon and the delivery seam work without
 # Channels (they degrade to a silent no-op — that is the contract). Serving a
 # socket does not: consumers, the test harness and the host assembly need it.
-channels = ["stapel-core[channels]>=0.33.2,<1.0", "channels>=4.0,<5"]
+channels = ["stapel-core[channels]>=0.45.0,<1.0", "channels>=4.0,<5"]
 # The v1 fan-out transport across replicas. Single-worker hosts can run the
 # in-memory layer; anything else is realtime.E001.
 redis = ["channels-redis>=4.2,<5"]
@@ -70,7 +79,7 @@ redis = ["channels-redis>=4.2,<5"]
 # serving sockets should not be made to install one; a test run may.
 testing = ["channels>=4.0,<5", "daphne>=4,<5"]
 all = [
-    "stapel-core[channels]>=0.33.2,<1.0",
+    "stapel-core[channels]>=0.45.0,<1.0",
     "channels>=4.0,<5",
     "channels-redis>=4.2,<5",
     "daphne>=4,<5",
@@ -87,7 +96,10 @@ packages = ["stapel_realtime"]
 # A module that keeps them repo-only publishes code an agent cannot read.
 # `schemas/wire/*.json` is the deliberate L1 exception (spec §4.1): the wire
 # envelope is a versioned contract between a backend consumer and a browser
-# client written by different hands, so it ships as a schema.
+# client written by different hands, so it ships as a schema. `schemas/
+# functions/*.json` is not an exception at all — it is the ordinary rule for a
+# comm surface, and it must reach site-packages because the core's schema
+# autoloader globs `<app path>/schemas` at runtime, not the repo.
 stapel_realtime = [
     "py.typed",
     "docs/capabilities.json",
@@ -97,10 +109,11 @@ stapel_realtime = [
 ]
 
 [tool.stapel.readme]
-# Not on PyPI yet (the trusted publisher for this new repo is a day-one owner
-# action). Until the first release lands, the README carries a status badge and
-# a source install line instead of a pypi badge that would render "not found".
-pypi = false
+# On PyPI since 0.1.1; the flag stayed false for three more releases and the
+# README kept telling readers to install from source. A badge that lies about
+# where the package lives is the small version of the catalog problem this
+# pipeline exists for.
+pypi = true
 
 [tool.ruff]
 target-version = "py311"

@@ -17,6 +17,8 @@ EXPECTED_API = [
     "ResumableStreamConsumer",
     "JournalRow",
     "WorkspaceCapability",
+    "is_live",
+    "live_batch",
     "build_websocket_application",
     "collect_websocket_urlpatterns",
     "StreamKey",

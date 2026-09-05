@@ -255,12 +255,112 @@ def check_route_prefix(app_configs, **kwargs):
     return problems
 
 
+def _presence_cache_backend() -> str:
+    from django.conf import settings
+
+    caches = getattr(settings, "CACHES", None) or {}
+    entry = caches.get("default") or {}
+    return str(entry.get("BACKEND") or "")
+
+
+def check_presence_cache(app_configs, **kwargs):
+    """W005 — a cache backend the presence registry cannot be shared through.
+
+    Presence is a lease in the fleet-shared cache, and the whole point is that
+    the service holding the socket and the service asking "is this user live"
+    are different processes. On a locmem cache each of them has its own dict:
+    every peer answers *no* while the socket is wide open, and the one process
+    that would answer yes is usually not the one asked. On a dummy cache
+    nothing is stored at all, so the oracle is a constant ``false``.
+
+    A warning and not an error, because both are legitimate for a single
+    process (a dev box, a test run) — where the answer is in fact correct.
+    """
+    from .conf import realtime_settings
+
+    if int(realtime_settings.PRESENCE_TTL_S or 0) <= 0:
+        return []  # the registry is off; W006 is the one that says so
+    backend = _presence_cache_backend()
+    if "locmem" in backend:
+        return [
+            CheckWarning(
+                "The default cache is LocMemCache: the presence registry lives "
+                "inside one process, so realtime.is_live answers 'no' from "
+                "every other worker and every peer service while the socket is "
+                "open.",
+                hint="Point CACHES['default'] at a shared backend (redis) on "
+                "any deployment where presence is read, or set "
+                "STAPEL_REALTIME['PRESENCE_TTL_S'] = 0 to say the registry is "
+                "deliberately not in use.",
+                id="realtime.W005",
+            )
+        ]
+    if "dummy" in backend:
+        return [
+            CheckWarning(
+                "The default cache is DummyCache: the presence registry stores "
+                "nothing, so realtime.is_live answers 'no' for everyone, "
+                "always.",
+                hint="Point CACHES['default'] at a shared backend (redis), or "
+                "set STAPEL_REALTIME['PRESENCE_TTL_S'] = 0 to say the registry "
+                "is deliberately not in use.",
+                id="realtime.W005",
+            )
+        ]
+    return []
+
+
+def check_presence_ttl(app_configs, **kwargs):
+    """W006 — a presence lease that cannot outlive the beat that renews it.
+
+    The heartbeat tick is what renews a session's lease. With
+    ``HEARTBEAT_S >= PRESENCE_TTL_S`` a perfectly healthy socket lets its own
+    lease expire between two beats: the user blinks offline and back, and
+    whoever gated a push on the oracle sends it to someone who is looking
+    right at the screen. Nothing logs it — the lease simply is not there when
+    it is read.
+    """
+    from .conf import realtime_settings
+
+    ttl = int(realtime_settings.PRESENCE_TTL_S or 0)
+    if ttl <= 0:
+        return [
+            CheckWarning(
+                "STAPEL_REALTIME['PRESENCE_TTL_S'] is 0: the presence registry "
+                "is disabled and the realtime.is_live / realtime.live_batch "
+                "Functions answer 'not live' for every user.",
+                hint="Set a TTL above HEARTBEAT_S (default 60s) on any host "
+                "whose peers gate notifications on liveness, or keep it at 0 "
+                "deliberately and let those peers send unconditionally.",
+                id="realtime.W006",
+            )
+        ]
+    heartbeat = float(realtime_settings.HEARTBEAT_S or 0)
+    if heartbeat <= 0:
+        return []  # no beat at all is realtime.W003's verdict, not a second one
+    if heartbeat >= ttl:
+        return [
+            CheckWarning(
+                f"STAPEL_REALTIME['HEARTBEAT_S'] ({heartbeat:g}s) is not below "
+                f"['PRESENCE_TTL_S'] ({ttl}s): a live socket lets its own "
+                "presence lease expire between two beats, so a watching user "
+                "reads as offline.",
+                hint="Keep the TTL comfortably above the heartbeat — the "
+                "defaults are 25s and 60s.",
+                id="realtime.W006",
+            )
+        ]
+    return []
+
+
 ALL_CHECKS = (
     check_channel_layer,
     check_layer_socket_timeout,
     check_allowed_origins,
     check_heartbeat,
     check_route_prefix,
+    check_presence_cache,
+    check_presence_ttl,
 )
 
 
@@ -278,6 +378,8 @@ __all__ = [
     "check_channel_layer",
     "check_heartbeat",
     "check_layer_socket_timeout",
+    "check_presence_cache",
+    "check_presence_ttl",
     "check_route_prefix",
     "register_checks",
 ]

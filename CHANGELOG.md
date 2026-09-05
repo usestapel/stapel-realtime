@@ -4,6 +4,82 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.2.0] — 2026-09-05
+
+### Added — the fleet can finally ask "is this person watching right now?"
+
+The calls thread filed the gap and worked around it in the client: with nothing
+in the fleet able to answer whether a user has a live realtime session, the
+incoming-call push went out **unconditionally**, and every client carried the
+job of suppressing a banner for a call it was already ringing in-app. A
+workaround on the wrong side of the wire, in every client, forever.
+
+`stapel-chat` had presence first, and it is the shape of the gap rather than
+the answer: it counts *chat* sockets, it is a Postgres row, and it is
+module-private — so a person on a video or notifications socket with no chat
+tab open reads as offline to everyone who asks. The oracle belongs in the
+substrate, because the substrate is the only thing that knows every open
+socket.
+
+- **A presence registry, written by the consumer.** `BaseStreamConsumer` now
+  records a session on connect (after `accept()` — a refused socket never
+  happened), renews it on every heartbeat tick, and drops it on disconnect.
+  Keyed by user; the session id is the Channels channel name, so two tabs are
+  two sessions and one person. Sessions carry their **stream family** (the
+  module segment of the stream key), so a caller can ask "live on chat" as
+  easily as "live anywhere".
+- **No table.** It is a TTL lease in the cache. A live count alone leaves a
+  user online forever when a worker is killed mid-socket; the lease is what
+  makes that session stop counting one `PRESENCE_TTL_S` later without anyone
+  running its `disconnect`. Expiry is enforced twice — as the entry's cache
+  timeout and again per session on read.
+- **Fleet-shared, not service-shared.** The write goes through
+  `stapel_core.core.fleet_cache`, never `django.core.cache`: every service sets
+  its own `KEY_PREFIX`, and the service holding the socket is not the service
+  deciding whether to send the push. Written through the ordinary connection
+  the oracle would answer "no" from every peer — the exact per-service illusion
+  that mechanism was extracted to end. This is why the `stapel-core` floor
+  moves from 0.33.2 to **0.45.0**.
+- **Two comm Functions**, with schemas under `schemas/functions/`:
+  `realtime.is_live {user_id, family?}` → `{live, sessions, last_seen}` and
+  `realtime.live_batch {user_ids (≤100), family?}` → `{users: {id: {…}}}`.
+  Every id supplied comes back, including one nobody has ever seen — an absence
+  must never be mistaken for an answer. In-process, `stapel_realtime.is_live` /
+  `live_batch` give the same result.
+- **No HTTP route.** This library has no views, no urls and no gate registry,
+  and a substrate that invents an HTTP surface for one read would be the first
+  of several. A peer asks over the bus, like it asks every other Function.
+- **It fails to "not live".** A disabled registry, an unreachable cache, a
+  corrupt document: `live: false`, nothing raises, nothing closes a socket. A
+  caller gating a push on it falls back to sending unconditionally — which is
+  precisely today's behaviour, so a broken oracle makes nothing worse.
+- **`realtime.W005`** — the default cache is locmem (presence lives inside one
+  process, so every peer answers "no" while the socket is open) or dummy (it
+  answers "no" for everyone, always). A warning, not an error: on a single
+  process both answers are in fact correct.
+- **`realtime.W006`** — `PRESENCE_TTL_S` is 0 (the registry is off and the
+  Functions say so), or `HEARTBEAT_S` is not below it. The heartbeat is what
+  renews the lease; with the beat at or above the TTL a perfectly healthy
+  socket lets its own lease expire between two beats and a watching user blinks
+  offline, silently.
+- **New axis `PRESENCE_TTL_S`** (default 60s, against the 25s default
+  heartbeat).
+
+### Changed
+
+- The README stopped claiming this package is unpublished. It has been on PyPI
+  since 0.1.1 while the generated install line still said "from source".
+
+### Notes for callers
+
+`live` is liveness and nothing else: it says a socket is open, not that the
+person is looking at it, and not that the caller is entitled to know. Who may
+ask is the caller's deployment policy, as with the rest of the fleet's read
+family. The answer names a stream *family*, never a stream, so it cannot leak
+which conversation someone is in. And `last_seen` outlives the last session by
+one TTL and no longer — a durable "last online" belongs to a profile row, not
+to a liveness lease.
+
 ## [0.1.4] — 2026-09-02
 
 ### Fixed — realtime.E002 was blind to the deployment it guarded

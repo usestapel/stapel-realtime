@@ -31,6 +31,9 @@ Django or Channels):
 - ``EphemeralStreamConsumer`` / ``ResumableStreamConsumer`` / ``JournalRow``
   — the consumers (need the ``channels`` extra).
 - ``WorkspaceCapability`` — the canonical authorizer for ``ws``-scoped streams.
+- ``is_live`` / ``live_batch`` — the presence oracle, in process. The same
+  answer is addressable fleet-wide as the ``realtime.is_live`` and
+  ``realtime.live_batch`` comm Functions, which is how a peer service asks.
 - ``build_websocket_application`` / ``collect_websocket_urlpatterns`` — host
   assembly.
 - ``build_stream_key`` / ``parse_stream_key`` / ``workspace_stream`` /
@@ -51,6 +54,9 @@ __all__ = [
     "JournalRow",
     # authorization
     "WorkspaceCapability",
+    # presence
+    "is_live",
+    "live_batch",
     # host assembly
     "build_websocket_application",
     "collect_websocket_urlpatterns",
@@ -83,6 +89,8 @@ _LAZY_EXPORTS = {
     "ResumableStreamConsumer": ".consumers",
     "JournalRow": ".consumers",
     "WorkspaceCapability": ".authorize",
+    "is_live": ".presence",
+    "live_batch": ".presence",
     "build_websocket_application": ".asgi",
     "collect_websocket_urlpatterns": ".asgi",
     "StreamKey": ".streams",

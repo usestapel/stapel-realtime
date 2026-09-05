@@ -32,7 +32,8 @@ package is everything on the other side of that call.
 | **Authorization** | A per-stream `authorize()` hook that is **fail-closed**: a consumer that does not implement it subscribes nobody. `WorkspaceCapability` is the canonical implementation — the same `require_capability` predicate HTTP uses. |
 | **Revoke → kick** | `revoke(stream_key, user_id)` sends a `kick` frame and closes 4410 immediately, rather than leaking until the client happens to reconnect. |
 | **Host assembly** | `build_websocket_application()` — origin guard (compared **with the port**) over core's G14 JWT stack over every installed module's routing manifest, discovered rather than listed. |
-| **System checks** | Five, each one a production bruise turned into a `manage.py check` verdict. |
+| **Presence** | The fleet's answer to "is this person watching *right now*?" — a TTL lease in the shared cache, written by the base consumer on connect / heartbeat / disconnect, read over the bus as `realtime.is_live` and `realtime.live_batch`. No model, no migration. |
+| **System checks** | Seven, each one a production bruise turned into a `manage.py check` verdict. |
 | **Test harness** | `stapel_realtime.testing.open_stream()` — an envelope-aware Channels client, so a module testing its consumer does not wire the fourth `WebsocketCommunicator` by hand. |
 
 ## Quick start
@@ -102,6 +103,46 @@ extra adds daphne, which `channels.testing` drags in — no reason to put an ASG
 server on a production host). A module that only *emits* needs nothing from
 here at all: `comm.signal()` lives in the core, and that is the point.
 
+## Presence: who is watching right now
+
+Every sender of a Signal eventually needs the question the substrate is the only
+place able to answer. The first to need it was an incoming call: the ring is
+pushed to the callee's phone *and* rung in the tab they already have open, and
+with nothing to ask, the push went out unconditionally and every client carried
+the workaround of suppressing a banner for a call it was already ringing.
+
+The base consumer writes a **TTL lease** into the fleet-shared cache on connect,
+on every heartbeat tick, and on disconnect. Anyone asks over the bus:
+
+```python
+from stapel_core.comm import call
+
+if not call("realtime.is_live", {"user_id": str(callee_id)})["live"]:
+    notify(callee_id, "call.incoming", ...)   # nobody is looking; push it
+
+# or, for a group, in one round trip (≤100 ids, every id comes back)
+live = call("realtime.live_batch", {"user_ids": ids})["users"]
+```
+
+`{"live": bool, "sessions": int, "last_seen": iso|null}` — `sessions` counts
+open sockets, so two tabs are two sessions and one person. An optional
+`"family"` narrows the question to one stream family (`chat`, `video`, …).
+
+Four properties worth knowing before you gate anything on it:
+
+- **It is a lease, not a counter.** A worker killed mid-socket never runs its
+  `disconnect`; one `PRESENCE_TTL_S` later that session simply stops counting.
+  Which is why the TTL must stay above `HEARTBEAT_S` — `realtime.W006`.
+- **It fails to "not live".** No cache, dead redis, corrupt document: the
+  answer is `false` and nothing raises. A caller gating a push therefore falls
+  back to sending it, which is exactly the behaviour that existed before.
+- **It is fleet-shared on purpose.** The write goes through
+  `stapel_core.core.fleet_cache`, not `django.core.cache`, because the service
+  holding the socket is not the service asking. On a locmem cache it is
+  per-process and `realtime.W005` says so.
+- **It is not a last-seen history.** `last_seen` outlives the session by one
+  TTL and no longer. A durable "last online" belongs to a profile row.
+
 ## The rule that keeps a fifth implementation from appearing
 
 Before this library the fleet had **three** independent browser sockets (chat,
@@ -121,10 +162,14 @@ transport-agnostic so it can be tested without a network.
 
 ## What it does not do
 
-Not in v1, on purpose: a presence registry, an SSE fallback, one multiplexed
+Not in v1, on purpose: an SSE fallback, one multiplexed
 socket for many streams (the envelope reserves `stream` so adding it later is
 not a breaking change), NATS as the signal transport (that is a future value of
 the core's axis, for the microservice topology), client→server commands over
 the socket (writes go through REST/Function), and delivering Actions to the
 browser as-is — an anti-pattern, because a five-minute-late "typing…" retried
-by an outbox is worse than no delivery at all.
+by an outbox is worse than no delivery at all. And a `presence.changed` signal:
+presence is *asked*, not announced, because a fan-out on every connect and
+disconnect in the fleet is a great deal of traffic for a fact that costs one
+cache read — a module that wants to paint a green dot subscribes to the one its
+own domain already emits (`chat.presence.changed`).

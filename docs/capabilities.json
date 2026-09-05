@@ -1,7 +1,7 @@
 {
   "module": "stapel-realtime",
-  "version": "0.1.4",
-  "provides": "Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, and five system checks. No models, migrations, views, urls or comm surface of its own; it is installed as a Django app only so its checks are registered.",
+  "version": "0.2.0",
+  "provides": "Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, the fleet's presence oracle, and seven system checks. Presence is a TTL lease in the fleet-shared cache (stapel_core.core.fleet_cache), written by the base consumer on connect, on every heartbeat tick and on disconnect — no model, no migration — and read by two comm Functions: realtime.is_live {user_id, family?} -> {live, sessions, last_seen} and realtime.live_batch {user_ids[<=100], family?} -> {users: {id: {...}}}. That pair is the whole comm surface; there are no models, migrations, views or urls, and no HTTP route of its own, so a peer asks over the bus like any other Function. It is installed as a Django app so the checks and the Functions are registered.",
   "axes": [
     {
       "key": "HEARTBEAT_S",
@@ -71,6 +71,20 @@
       "curated": {
         "summary": "Seconds an authorize() verdict is reused for the same (user, stream) within one socket, matching the capability cache the HTTP path already accepts. This is the acknowledged ceiling on the residual leak window; the way to shorten it for a specific stream is revoke(), not a lower TTL.",
         "business_label": "How long a subscription verdict is trusted before it is re-asked"
+      }
+    },
+    {
+      "key": "PRESENCE_TTL_S",
+      "kind": "int",
+      "default": 60,
+      "group": "realtime.presence",
+      "gates": {
+        "operations": [],
+        "co_gates": []
+      },
+      "curated": {
+        "summary": "Seconds one live session counts for without a refresh — a LEASE, renewed by the base consumer on every heartbeat tick, so a worker killed mid-socket stops counting one TTL later instead of leaving a user online forever. It must stay above HEARTBEAT_S or a healthy socket lets its own lease expire between two beats (realtime.W006). 0 disables the registry and realtime.is_live then answers 'not live' for everyone, which the same check reports.",
+        "business_label": "How long a person counts as watching after their last heartbeat"
       }
     },
     {
@@ -253,6 +267,42 @@
       "kind": "factory",
       "path": "stapel_realtime.envelope.parse_frame",
       "intent": "Validate an inbound envelope into a Frame dataclass, raising InvalidEnvelope rather than returning a half-trusted dict. Note the asymmetry it encodes: an unknown frame TYPE parses (the consumer answers bad_type), an unknown envelope VERSION does not (the shape underneath is unknown)."
+    },
+    {
+      "name": "is_live",
+      "kind": "predicate",
+      "path": "stapel_realtime.presence.is_live",
+      "intent": "Does this user have a live realtime session right now — {live, sessions, last_seen}, optionally narrowed to one stream family. The in-process half of the fleet oracle; a PEER service asks the same question as the realtime.is_live comm Function, because the process holding the socket is not the one deciding whether to send a push. Never raises: an unreachable cache answers 'not live', so a caller gating a notification falls back to sending it.",
+      "instead_of": [
+        "a module keeping its own socket-scoped presence table, which reads offline for anyone watching a different module's stream"
+      ]
+    },
+    {
+      "name": "live_batch",
+      "kind": "predicate",
+      "path": "stapel_realtime.presence.live_batch",
+      "intent": "is_live for up to 100 users in one cache round trip — the read a notifier makes before fanning out to a group. Every id asked about comes back, including one nobody has ever seen, so an absence can never be mistaken for an answer.",
+      "instead_of": [
+        "a loop of single is_live calls, one round trip per recipient"
+      ]
+    },
+    {
+      "name": "record_connect",
+      "kind": "factory",
+      "path": "stapel_realtime.presence.record_connect",
+      "intent": "Count one live session for a user, keyed by the socket's channel name. The base consumer calls it after accept(); write your own only if you serve a socket this library's consumers do not. Two tabs are two sessions and one person."
+    },
+    {
+      "name": "record_disconnect",
+      "kind": "factory",
+      "path": "stapel_realtime.presence.record_disconnect",
+      "intent": "Stop counting one session. The document survives with an empty session map so last_seen stays answerable for one more TTL; presence is a liveness lease, not a history."
+    },
+    {
+      "name": "record_heartbeat",
+      "kind": "factory",
+      "path": "stapel_realtime.presence.record_heartbeat",
+      "intent": "Renew a session's presence lease. This is what makes a crashed worker stop counting — nothing runs its disconnect, and one PRESENCE_TTL_S later the session is simply not live. Which is why HEARTBEAT_S must stay below that TTL (realtime.W006)."
     },
     {
       "name": "group_name",

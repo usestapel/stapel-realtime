@@ -41,7 +41,10 @@ except ImportError as exc:  # pragma: no cover - exercised via optional-dep test
         "Install it with:\n    pip install 'stapel-realtime[channels]'"
     ) from exc
 
+from asgiref.sync import sync_to_async
+
 from . import envelope as wire
+from . import presence
 from .authorize import deny
 from .close_codes import (
     CLOSE_FORBIDDEN,
@@ -54,7 +57,7 @@ from .close_codes import (
 )
 from .conf import realtime_settings
 from .delivery import GROUP_TYPE_FRAME, GROUP_TYPE_REVOKE, GROUP_TYPE_SIGNAL
-from .streams import InvalidStreamKey, build_stream_key, group_name
+from .streams import InvalidStreamKey, build_stream_key, group_name, parse_stream_key
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +103,7 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         self.stream_key: str | None = None
         self.group: str | None = None
+        self._presence_session: str | None = None
         self._max_seq_sent = 0
         self._protocol_strikes = 0
         self._pong_pending = False
@@ -133,6 +137,16 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
         self.group = group_name(self.stream_key)
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
+        # 4. Presence, only now: a socket refused above never happened, and
+        #    counting it would make the fleet's liveness oracle answer yes for
+        #    a person who was just told no.
+        self._presence_session = self.channel_name
+        await self._presence_write(
+            presence.record_connect,
+            self._user_id(),
+            self._presence_session,
+            family=self.presence_family(),
+        )
         self._writer_task = asyncio.create_task(self._writer_loop())
         interval = float(realtime_settings.HEARTBEAT_S or 0)
         if interval > 0:
@@ -143,6 +157,15 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
         for task in (self._heartbeat_task, self._writer_task):
             if task is not None:
                 task.cancel()
+        session = getattr(self, "_presence_session", None)
+        if session:
+            # Only a session this socket actually counted is uncounted here.
+            # Decrementing one it never added would strand the user offline
+            # while a real tab of theirs is open.
+            self._presence_session = None
+            await self._presence_write(
+                presence.record_disconnect, self._user_id(), session
+            )
         if getattr(self, "group", None):
             await self.channel_layer.group_discard(self.group, self.channel_name)
 
@@ -347,6 +370,16 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
                 self._closing = True
                 await self.close(code=CLOSE_UNAUTHENTICATED)
                 return
+            # The same tick renews the presence lease: one timer for "this
+            # socket is alive" and "this person is watching", so the two can
+            # never drift apart.
+            if self._presence_session:
+                await self._presence_write(
+                    presence.record_heartbeat,
+                    self._user_id(),
+                    self._presence_session,
+                    family=self.presence_family(),
+                )
             self._pong_pending = True
             await self.send_frame(wire.PING)
             await asyncio.sleep(timeout)
@@ -364,6 +397,39 @@ class BaseStreamConsumer(AsyncJsonWebsocketConsumer):
             return float(exp) <= time.time()
         except (TypeError, ValueError):
             return False
+
+    # ── presence ─────────────────────────────────────────────────────────
+
+    def presence_family(self) -> str | None:
+        """Stream family this socket counts towards in the presence registry.
+
+        The module segment of the stream key — ``chat``, ``video``, ``calls``
+        — read from the key the socket actually serves rather than from the
+        class attribute, so a consumer that overrides
+        :meth:`get_stream_key` is still counted under the family it really
+        joined. ``None`` when the key does not parse; presence then answers
+        only the unscoped "watching anything at all" question, which is the
+        one a push suppressor asks.
+        """
+        try:
+            return parse_stream_key(self.stream_key).module
+        except (InvalidStreamKey, TypeError):
+            return self.module
+
+    async def _presence_write(self, action, *args, **kwargs) -> None:
+        """Run one presence write off the loop. Never raises, never closes.
+
+        A cache round trip is blocking work and belongs in a thread, and a
+        registry that cannot be written is a degraded oracle, not a broken
+        socket: the fleet falls back to the unconditional behaviour presence
+        exists to improve on.
+        """
+        try:
+            await sync_to_async(action, thread_sensitive=False)(*args, **kwargs)
+        except Exception:  # presence never closes a socket
+            logger.warning(
+                "realtime: presence write failed on %s", self.stream_key, exc_info=True
+            )
 
     def _user_id(self):
         user = self.scope.get("user")

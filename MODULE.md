@@ -32,7 +32,12 @@ everything the frame touches after that call lives here:
   module that only emits must be able to build one without this library.
 - A fail-closed `authorize()` seam, and `revoke()` to end a subscription now.
 - `build_websocket_application()` — the host's whole WebSocket stack.
-- Five system checks.
+- **Presence** — a TTL lease in the fleet-shared cache, written by the base
+  consumer on connect / heartbeat / disconnect, read over the bus as the
+  `realtime.is_live` and `realtime.live_batch` Functions. The substrate is the
+  only place that knows which sockets are open, so the oracle lives here rather
+  than in the module that happens to need it first.
+- Seven system checks.
 - `stapel_realtime.testing` — the Channels test client for module consumers.
 
 **Contract of a Signal** (do not design around anything stronger):
@@ -63,6 +68,7 @@ default. Full table with sources in [CONFIG.MD](CONFIG.MD).
 | `MAX_REPLAY` | `500` | Replay window, and the `limit` handed to `get_replay_rows`. A wider gap answers a `resync` frame. |
 | `SEND_QUEUE_SIZE` | `100` | Per-socket outbound buffer before close 4413. |
 | `AUTHORIZE_CACHE_S` | `30` | How long a subscription verdict is reused within one socket. |
+| `PRESENCE_TTL_S` | `60` | Presence lease length. Must stay above `HEARTBEAT_S` (`realtime.W006`); `0` disables the registry. |
 | `ALLOWED_ORIGINS` | `[]` | Exact origins **with port**. Empty disables the guard (`realtime.W002`). |
 | `URL_PREFIX` | `"ws"` | Edge convention for socket routes (`realtime.W004`). |
 | `LAYER_SOCKET_TIMEOUT_MIN` | `None` | Floor for the redis layer's `socket_timeout`; `None` derives it from `expiry + 10` (`realtime.E002`). |
@@ -116,6 +122,32 @@ optionally `topic`), or override `async get_stream_key()`.
 **Store-first is the module's job**, not something the base class can enforce:
 write the row, then `deliver_frame(...)` on commit. Then a dropped socket costs
 nothing, because the journal — not the transport — is the durable thing.
+
+### Presence (`realtime.is_live`, `realtime.live_batch`)
+
+The comm surface, and the only one this library has. There is **no HTTP route**
+— it has no views, no urls and no gate registry — so a peer asks the way it
+asks any Function.
+
+```python
+from stapel_core.comm import call
+
+call("realtime.is_live", {"user_id": "…"})
+# -> {"live": True, "sessions": 2, "last_seen": "2026-09-05T…+00:00"}
+
+call("realtime.live_batch", {"user_ids": [...]})   # ≤ 100, every id comes back
+# -> {"users": {"…": {"live": …, "sessions": …, "last_seen": …}}}
+```
+
+Both take an optional `"family"` — the module segment of the stream key — to
+ask "live on `chat`" rather than "live anywhere". Unguarded, like the rest of
+the fleet's read family: the bus is a trusted boundary and *who may ask* is the
+caller's deployment policy. The answer never names a stream, only a family, so
+it cannot leak which conversation someone is in.
+
+In-process, `stapel_realtime.is_live` / `live_batch` give the same answer;
+`presence.record_connect` / `record_heartbeat` / `record_disconnect` are the
+write side, for a host serving a socket this library's consumers do not.
 
 ### Transport (`deliver`)
 
@@ -179,6 +211,8 @@ credentials.
 | `realtime.W002` | warning | Empty `ALLOWED_ORIGINS` — the origin guard is off |
 | `realtime.W003` | warning | `HEARTBEAT_S = 0` — no liveness *and* no `exp` re-check |
 | `realtime.W004` | warning | A socket route outside `/<URL_PREFIX>/<module>/…` |
+| `realtime.W005` | warning | The default cache is locmem or dummy — presence is per-process, or stored nowhere |
+| `realtime.W006` | warning | `PRESENCE_TTL_S` is 0, or `HEARTBEAT_S` is not below it — the lease expires between two beats |
 
 ---
 

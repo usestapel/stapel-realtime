@@ -5,11 +5,13 @@ One row per configuration key the library reads, its **source** (`env` = the
 process environment / the `STAPEL_REALTIME` settings dict), what it is for,
 whether it is required, and its default.
 
-stapel-realtime is an **L1 library** — no models, migrations, views, urls or
-comm surface of its own. Unlike most L1 libraries it *is* added to
+stapel-realtime is an **L1 library** — no models, migrations, views or urls.
+Since 0.2.0 it does carry a two-Function comm surface (the presence oracle:
+`realtime.is_live`, `realtime.live_batch`), and it is still added to
 `INSTALLED_APPS` on a host that serves WebSockets, because it carries system
-checks and an unregistered check is a comment. A host that only imports the
-envelope or the stream-key helpers does not need the app entry.
+checks and an unregistered check is a comment — as an unregistered Function is
+a door nobody can open. A host that only imports the envelope or the
+stream-key helpers does not need the app entry.
 
 Every key is read through `realtime_settings`
 (`stapel_realtime.conf.AppSettings`, namespace `STAPEL_REALTIME`).
@@ -30,6 +32,7 @@ canon a package's keys are unprefixed inside its own namespace, so they are
 | MAX_REPLAY | env | widest resume gap replayed inline on a resumable stream, and the `limit` passed to the module's `get_replay_rows` hook; a wider gap answers `error{code=resync}`. | no | 500 |
 | SEND_QUEUE_SIZE | env | outbound frames buffered per socket before the substrate closes 4413 rather than waiting on a slow reader. | no | 100 |
 | AUTHORIZE_CACHE_S | env | seconds an `authorize()` verdict is reused for the same (user, stream) within one socket; the acknowledged ceiling on the residual leak window for non-revoke paths. | no | 30 |
+| PRESENCE_TTL_S | env | seconds one live session counts for without a refresh — the presence lease the base consumer renews on every heartbeat tick. Must stay above `HEARTBEAT_S` (realtime.W006); 0 disables the registry and `realtime.is_live` then answers "not live" for everyone. | no | 60 |
 | ALLOWED_ORIGINS | env | exact origins WITH port that may open a socket; empty disables the guard (realtime.W002), a malformed entry is realtime.E003. | no | [] |
 | URL_PREFIX | env | edge convention socket routes live under (`/ws/<mod>/…`), asserted by realtime.W004. | no | ws |
 | LAYER_SOCKET_TIMEOUT_MIN | env | floor for the redis channel layer's `socket_timeout`; `None` derives it from the layer's `expiry + 10` (realtime.E002). | no | None |
@@ -39,6 +42,7 @@ canon a package's keys are unprefixed inside its own namespace, so they are
 | Setting | Owner | Why it matters here |
 |---------|-------|---------------------|
 | `CHANNEL_LAYERS["default"]` | Django Channels | The fan-out backend. Absent → delivery is a silent no-op (realtime.W001). In-memory with more than one worker → realtime.E001. Its `CONFIG.socket_timeout` / `CONFIG.connection_kwargs.socket_timeout` and `CONFIG.expiry` are what realtime.E002 reads. |
+| `CACHES["default"]` | Django | Where the presence registry lives. Not through `django.core.cache` directly: `stapel_core.core.fleet_cache` opens a second connection into the same store with a fleet-wide `KEY_PREFIX`, so the service holding the socket and the peer asking "is this user live" compute the same key. A locmem or dummy backend is realtime.W005. |
 | `WEB_CONCURRENCY` / `UVICORN_WORKERS` / `GUNICORN_WORKERS` | the ASGI server | How realtime.E001 learns the worker count. |
 | the `stapel-core` JWT settings | stapel-core | `build_websocket_application()` installs core's G14 middleware; the socket authenticates with exactly the HTTP token stack. |
 | `STAPEL_COMM["SIGNAL_TRANSPORT"]` | stapel-core | Selects the delivery backend for `comm.signal()`. This library registers itself as `"channels"`; the core's default is `"none"`, which makes every `signal()` a silent no-op. An unresolvable value is reported by `stapel_core.comm.E003`. |

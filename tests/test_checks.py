@@ -229,6 +229,64 @@ class TestRoutePrefix:
         assert "sockets/offside" in problems[0].msg
 
 
+LOCMEM = "django.core.cache.backends.locmem.LocMemCache"
+DUMMY = "django.core.cache.backends.dummy.DummyCache"
+REDIS_CACHE = "django.core.cache.backends.redis.RedisCache"
+
+
+class TestPresenceCache:
+    def test_locmem_means_a_presence_registry_nobody_else_can_read(self, settings):
+        """The whole point is that the asker is a different process."""
+        settings.CACHES = {"default": {"BACKEND": LOCMEM}}
+        problems = checks.check_presence_cache(None)
+        assert ids(problems) == ["realtime.W005"]
+        assert "one process" in problems[0].msg
+
+    def test_dummy_means_a_constant_no(self, settings):
+        settings.CACHES = {"default": {"BACKEND": DUMMY}}
+        problems = checks.check_presence_cache(None)
+        assert ids(problems) == ["realtime.W005"]
+        assert "stores nothing" in problems[0].msg
+
+    def test_a_shared_backend_is_silent(self, settings):
+        settings.CACHES = {"default": {"BACKEND": REDIS_CACHE}}
+        assert checks.check_presence_cache(None) == []
+
+    def test_a_disabled_registry_does_not_warn_about_its_backend(self, settings):
+        """W006 already says the registry is off; W005 would be a second voice."""
+        settings.CACHES = {"default": {"BACKEND": LOCMEM}}
+        settings.STAPEL_REALTIME = {"PRESENCE_TTL_S": 0}
+        assert checks.check_presence_cache(None) == []
+
+
+class TestPresenceTTL:
+    def test_a_heartbeat_slower_than_the_lease_makes_a_watcher_look_offline(
+        self, settings
+    ):
+        settings.STAPEL_REALTIME = {"HEARTBEAT_S": 90, "PRESENCE_TTL_S": 60}
+        problems = checks.check_presence_ttl(None)
+        assert ids(problems) == ["realtime.W006"]
+        assert "between two beats" in problems[0].msg
+
+    def test_equal_values_are_already_wrong(self, settings):
+        settings.STAPEL_REALTIME = {"HEARTBEAT_S": 60, "PRESENCE_TTL_S": 60}
+        assert ids(checks.check_presence_ttl(None)) == ["realtime.W006"]
+
+    def test_the_defaults_are_silent(self, settings):
+        settings.STAPEL_REALTIME = {}
+        assert checks.check_presence_ttl(None) == []
+
+    def test_a_disabled_registry_says_so(self, settings):
+        settings.STAPEL_REALTIME = {"PRESENCE_TTL_S": 0}
+        problems = checks.check_presence_ttl(None)
+        assert ids(problems) == ["realtime.W006"]
+        assert "answer 'not live' for every user" in problems[0].msg
+
+    def test_no_heartbeat_is_left_to_w003(self, settings):
+        settings.STAPEL_REALTIME = {"HEARTBEAT_S": 0, "PRESENCE_TTL_S": 60}
+        assert checks.check_presence_ttl(None) == []
+
+
 class TestRegistration:
     def test_every_check_is_registered_by_the_app_config(self):
         """A check that is not registered is a comment."""

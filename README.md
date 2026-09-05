@@ -4,30 +4,30 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/usestapel/stapel-realtime/ci.yml?branch=main&logo=github&label=CI)](https://github.com/usestapel/stapel-realtime/actions/workflows/ci.yml?query=branch%3Amain)
 [![coverage](https://img.shields.io/codecov/c/github/usestapel/stapel-realtime?branch=main&logo=codecov&label=coverage)](https://app.codecov.io/gh/usestapel/stapel-realtime)
-[![status](https://img.shields.io/badge/status-unreleased-orange)](https://github.com/usestapel/stapel-realtime)
+[![pypi](https://img.shields.io/pypi/v/stapel-realtime?logo=pypi&logoColor=white&label=pypi)](https://pypi.org/project/stapel-realtime/)
+[![downloads](https://static.pepy.tech/badge/stapel-realtime/month)](https://pepy.tech/project/stapel-realtime)
+[![python](https://img.shields.io/pypi/pyversions/stapel-realtime?logo=python&logoColor=white)](https://pypi.org/project/stapel-realtime/)
 [![license](https://img.shields.io/github/license/usestapel/stapel-realtime)](https://github.com/usestapel/stapel-realtime/blob/main/LICENSE)
 [![llms.txt](https://img.shields.io/badge/llms.txt-blue)](https://github.com/usestapel/stapel-realtime/blob/main/docs/llms.txt)
 
-> Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, and five system checks. No models, migrations, views, urls or comm surface of its own; it is installed as a Django app only so its checks are registered.
+> Realtime delivery substrate: the L1 library behind the Signal primitive (stapel_core.comm.signal). Ships the Channels/Redis transport for the core's signal-delivery seam, the two consumers every browser socket in the fleet is built from (EphemeralStreamConsumer for at-most-once Signal fan-out; ResumableStreamConsumer for hello/welcome/replay/live journals with seq dedup and a bounded replay window), the versioned v1 wire envelope, the canonical <mod>:<scope_type>:<scope_id>[:<topic>] stream key, a fail-closed per-stream authorize seam with the workspace-capability authorizer, revoke-to-kick, heartbeat with JWT-exp re-check, disconnect-on-overflow backpressure, the fleet close-code canon, build_websocket_application() host assembly with a port-aware origin guard, the fleet's presence oracle, and seven system checks. Presence is a TTL lease in the fleet-shared cache (stapel_core.core.fleet_cache), written by the base consumer on connect, on every heartbeat tick and on disconnect — no model, no migration — and read by two comm Functions: realtime.is_live {user_id, family?} -> {live, sessions, last_seen} and realtime.live_batch {user_ids[<=100], family?} -> {users: {id: {...}}}. That pair is the whole comm surface; there are no models, migrations, views or urls, and no HTTP route of its own, so a peer asks over the bus like any other Function. It is installed as a Django app so the checks and the Functions are registered.
 
 Part of the [Stapel framework](https://github.com/usestapel) — composable Django apps that deploy as a monolith or as microservices without changing module code.
 
 ## Install
 
-Not published on PyPI yet. Install from source:
-
 ```bash
-pip install git+https://github.com/usestapel/stapel-realtime
+pip install stapel-realtime
 ```
 
 ## At a glance
 
 | Fact | Value |
 |---|---|
-| Version | `0.1.4` |
+| Version | `0.2.0` |
 | Python | `>=3.11` (3.11, 3.12, 3.13) |
-| Config axes | 8 |
-| Usage surface | 18 |
+| Config axes | 9 |
+| Usage surface | 23 |
 | Extension points | 6 |
 | Fleet dependencies | [`stapel-core`](https://github.com/usestapel/stapel-core) |
 
@@ -69,7 +69,8 @@ package is everything on the other side of that call.
 | **Authorization** | A per-stream `authorize()` hook that is **fail-closed**: a consumer that does not implement it subscribes nobody. `WorkspaceCapability` is the canonical implementation — the same `require_capability` predicate HTTP uses. |
 | **Revoke → kick** | `revoke(stream_key, user_id)` sends a `kick` frame and closes 4410 immediately, rather than leaking until the client happens to reconnect. |
 | **Host assembly** | `build_websocket_application()` — origin guard (compared **with the port**) over core's G14 JWT stack over every installed module's routing manifest, discovered rather than listed. |
-| **System checks** | Five, each one a production bruise turned into a `manage.py check` verdict. |
+| **Presence** | The fleet's answer to "is this person watching *right now*?" — a TTL lease in the shared cache, written by the base consumer on connect / heartbeat / disconnect, read over the bus as `realtime.is_live` and `realtime.live_batch`. No model, no migration. |
+| **System checks** | Seven, each one a production bruise turned into a `manage.py check` verdict. |
 | **Test harness** | `stapel_realtime.testing.open_stream()` — an envelope-aware Channels client, so a module testing its consumer does not wire the fourth `WebsocketCommunicator` by hand. |
 
 ## Quick start
@@ -139,6 +140,46 @@ extra adds daphne, which `channels.testing` drags in — no reason to put an ASG
 server on a production host). A module that only *emits* needs nothing from
 here at all: `comm.signal()` lives in the core, and that is the point.
 
+## Presence: who is watching right now
+
+Every sender of a Signal eventually needs the question the substrate is the only
+place able to answer. The first to need it was an incoming call: the ring is
+pushed to the callee's phone *and* rung in the tab they already have open, and
+with nothing to ask, the push went out unconditionally and every client carried
+the workaround of suppressing a banner for a call it was already ringing.
+
+The base consumer writes a **TTL lease** into the fleet-shared cache on connect,
+on every heartbeat tick, and on disconnect. Anyone asks over the bus:
+
+```python
+from stapel_core.comm import call
+
+if not call("realtime.is_live", {"user_id": str(callee_id)})["live"]:
+    notify(callee_id, "call.incoming", ...)   # nobody is looking; push it
+
+# or, for a group, in one round trip (≤100 ids, every id comes back)
+live = call("realtime.live_batch", {"user_ids": ids})["users"]
+```
+
+`{"live": bool, "sessions": int, "last_seen": iso|null}` — `sessions` counts
+open sockets, so two tabs are two sessions and one person. An optional
+`"family"` narrows the question to one stream family (`chat`, `video`, …).
+
+Four properties worth knowing before you gate anything on it:
+
+- **It is a lease, not a counter.** A worker killed mid-socket never runs its
+  `disconnect`; one `PRESENCE_TTL_S` later that session simply stops counting.
+  Which is why the TTL must stay above `HEARTBEAT_S` — `realtime.W006`.
+- **It fails to "not live".** No cache, dead redis, corrupt document: the
+  answer is `false` and nothing raises. A caller gating a push therefore falls
+  back to sending it, which is exactly the behaviour that existed before.
+- **It is fleet-shared on purpose.** The write goes through
+  `stapel_core.core.fleet_cache`, not `django.core.cache`, because the service
+  holding the socket is not the service asking. On a locmem cache it is
+  per-process and `realtime.W005` says so.
+- **It is not a last-seen history.** `last_seen` outlives the session by one
+  TTL and no longer. A durable "last online" belongs to a profile row.
+
 ## The rule that keeps a fifth implementation from appearing
 
 Before this library the fleet had **three** independent browser sockets (chat,
@@ -158,13 +199,17 @@ transport-agnostic so it can be tested without a network.
 
 ## What it does not do
 
-Not in v1, on purpose: a presence registry, an SSE fallback, one multiplexed
+Not in v1, on purpose: an SSE fallback, one multiplexed
 socket for many streams (the envelope reserves `stream` so adding it later is
 not a breaking change), NATS as the signal transport (that is a future value of
 the core's axis, for the microservice topology), client→server commands over
 the socket (writes go through REST/Function), and delivering Actions to the
 browser as-is — an anti-pattern, because a five-minute-late "typing…" retried
-by an outbox is worse than no delivery at all.
+by an outbox is worse than no delivery at all. And a `presence.changed` signal:
+presence is *asked*, not announced, because a fan-out on every connect and
+disconnect in the fleet is a great deal of traffic for a fact that costs one
+cache read — a module that wants to paint a green dot subscribes to the one its
+own domain already emits (`chat.presence.changed`).
 
 ## License
 

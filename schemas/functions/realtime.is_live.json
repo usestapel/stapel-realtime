@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "realtime.is_live",
+  "description": "Does this user have a live realtime session right now? Returns {\"live\": bool, \"sessions\": int, \"last_seen\": \"<iso8601>\"|null} — sessions is the number of open sockets (two tabs are two sessions and one person), last_seen the most recent moment one of them was seen, null once the lease has expired. Optional \"family\" narrows the question to one stream family (the module segment of the stream key: \"chat\", \"video\", ...); omit it to ask \"watching anything at all\", which is what a push suppressor wants. Never raises: a disabled registry, an unreachable cache or a user nobody has ever seen all answer live=false, because an extra push is a duplicate banner and a missed one is a missed call. Liveness only — it says nothing about whether the caller may know it, which is the caller's deployment policy.",
+  "type": "object",
+  "required": ["user_id"],
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The user to answer for."
+    },
+    "family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stream family to count, i.e. the module segment of the stream key. Absent means every family."
+    }
+  },
+  "additionalProperties": false
+}

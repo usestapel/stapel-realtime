@@ -41,6 +41,16 @@ realtime_settings = AppSettings(
         # — the acknowledged ceiling on the residual leak window for paths
         # that do not get an explicit revoke().
         "AUTHORIZE_CACHE_S": 30,
+        # ── presence ─────────────────────────────────────────────────────
+        # Seconds one live session counts for without a refresh. The base
+        # consumer writes on connect, on every heartbeat tick and on
+        # disconnect, so this is a LEASE: a worker killed mid-socket stops
+        # counting one TTL later instead of leaving a user online forever.
+        # It must stay above HEARTBEAT_S or a live socket lets its own lease
+        # expire between two beats — realtime.W006. 0 disables the registry
+        # and `realtime.is_live` then answers `live: false` for everyone,
+        # which the same check reports.
+        "PRESENCE_TTL_S": 60,
         # ── host assembly ────────────────────────────────────────────────
         # Exact allowed ``Origin`` values, WITH port
         # (``https://studio.example.com``, ``http://studio.localhost:8600``).

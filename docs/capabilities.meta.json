@@ -1,5 +1,5 @@
 {
-  "_comment": "Curated layer for the `surface` section of docs/capabilities.json. The honest boundary, same as stapel-attributes: capabilities.json is otherwise HAND-WRITTEN — this L1 library has no gate registry and no docs/schema.json (no HTTP surface of its own), so provides/axes/extension_points/requires are curated prose, not derived. `make contract` patches in the two derivable things: module/version from pyproject, and the derived `surface`. The classes are the other half of the surface and the selector set does not reach them (it selects module-level functions): EphemeralStreamConsumer, ResumableStreamConsumer and BaseStreamConsumer in consumers.py, WorkspaceCapability in authorize.py, OriginGuard in asgi.py, StreamClient in testing.py. They are documented in `extension_points` and in MODULE.md. checks.py is deliberately not a surface root: system checks are registered, not called.",
+  "_comment": "Curated layer for the `surface` section of docs/capabilities.json. The honest boundary, same as stapel-attributes: capabilities.json is otherwise HAND-WRITTEN — this L1 library has no gate registry and no docs/schema.json (no HTTP surface of its own), so provides/axes/extension_points/requires are curated prose, not derived. `make contract` patches in the two derivable things: module/version from pyproject, and the derived `surface`. The classes are the other half of the surface and the selector set does not reach them (it selects module-level functions): EphemeralStreamConsumer, ResumableStreamConsumer and BaseStreamConsumer in consumers.py, WorkspaceCapability in authorize.py, OriginGuard in asgi.py, StreamClient in testing.py. They are documented in `extension_points` and in MODULE.md. checks.py is deliberately not a surface root: system checks are registered, not called. functions.py is not one either, for the same reason one step further out: a comm Function is addressed by NAME over the bus, never imported, and listing its handler as a callable surface would invite exactly the in-process import the Function exists to replace. The two handlers are documented in `provides` and in schemas/functions/; presence.py carries the in-process half of the same answer and IS a root.",
   "surface_roots": [
     {
       "select": "functions",
@@ -20,6 +20,10 @@
     {
       "select": "functions",
       "path": "authorize.py"
+    },
+    {
+      "select": "functions",
+      "path": "presence.py"
     },
     {
       "select": "functions",
@@ -100,6 +104,32 @@
     "deny": {
       "kind": "gate_function",
       "intent": "The default authorize hook: refuse, and log which stream a consumer forgot to gate. Fail-closed is the whole design — an open default is a leak that looks like working code in every test a module writes for itself. Do not call it; know that it is what you get by not overriding authorize()."
+    },
+    "is_live": {
+      "kind": "predicate",
+      "intent": "Does this user have a live realtime session right now — {live, sessions, last_seen}, optionally narrowed to one stream family. The in-process half of the fleet oracle; a PEER service asks the same question as the realtime.is_live comm Function, because the process holding the socket is not the one deciding whether to send a push. Never raises: an unreachable cache answers 'not live', so a caller gating a notification falls back to sending it.",
+      "instead_of": [
+        "a module keeping its own socket-scoped presence table, which reads offline for anyone watching a different module's stream"
+      ]
+    },
+    "live_batch": {
+      "kind": "predicate",
+      "intent": "is_live for up to 100 users in one cache round trip — the read a notifier makes before fanning out to a group. Every id asked about comes back, including one nobody has ever seen, so an absence can never be mistaken for an answer.",
+      "instead_of": [
+        "a loop of single is_live calls, one round trip per recipient"
+      ]
+    },
+    "record_connect": {
+      "kind": "factory",
+      "intent": "Count one live session for a user, keyed by the socket's channel name. The base consumer calls it after accept(); write your own only if you serve a socket this library's consumers do not. Two tabs are two sessions and one person."
+    },
+    "record_heartbeat": {
+      "kind": "factory",
+      "intent": "Renew a session's presence lease. This is what makes a crashed worker stop counting — nothing runs its disconnect, and one PRESENCE_TTL_S later the session is simply not live. Which is why HEARTBEAT_S must stay below that TTL (realtime.W006)."
+    },
+    "record_disconnect": {
+      "kind": "factory",
+      "intent": "Stop counting one session. The document survives with an empty session map so last_seen stays answerable for one more TTL; presence is a liveness lease, not a history."
     },
     "user_id_from_scope": {
       "kind": "predicate",
