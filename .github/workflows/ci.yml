@@ -20,6 +20,66 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # Editable (library-standard §7.6): tests/ are excluded from the wheel, so
+      # installing the built package would leave `stapel_realtime.tests.*`
+      # unimportable — the systemic incident of the 0.8 wave. The release track
+      # below is what proves the wheel.
+      - name: Install
+        run: pip install -e ".[all]"
+
+      - name: Lint
+        run: |
+          pip install ruff --quiet
+          ruff check . --select E,F,W --ignore E501
+
+      - name: Import check
+        run: python -c "import stapel_realtime; print('import OK')"
+
+      - name: Install test dependencies
+        # stapel-tools drives the contract drift gate in tests/test_contract.py.
+        run: pip install pytest pytest-django pytest-cov pytest-asyncio jsonschema "stapel-tools>=0.42.0"
+
+      - name: Tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=stapel_realtime \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --junitxml=junit.xml \
+            -o junit_family=legacy \
+            -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          files: coverage.xml
+          flags: stapel-realtime
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results to Codecov
+        uses: codecov/test-results-action@v1
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  core-main:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
       # Dev track: the core off git main, for fast feedback while core and
       # library are co-developed. The release track below installs the pinned
       # core from PyPI, exactly as a user would.
