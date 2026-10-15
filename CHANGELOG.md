@@ -4,6 +4,14 @@ All notable changes to stapel-realtime are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0 semver: **minor = breaking**, patch = compatible.
 
+## [0.2.2] — 2026-10-15
+
+Patch: `CONFIG.MD` declared `URL_PREFIX` with source `namespace only`, which
+stapel-core's `parse_config_md` rejects (accepted: `env|vault|settings`), so
+`manage.py check` crashed for any project that selects this library. The row
+now says `settings`. The `stapel-core` floor is `>=0.92.1`, the first release
+whose parser knows `settings`. A test parses the library's own `CONFIG.MD`.
+
 ## [0.2.1] — 2026-09-06
 
 ### Fixed — realtime.W004 was judging sockets against the wrong prefix
